@@ -35,6 +35,7 @@ from typing import Optional, Tuple, List
 
 from .base_screen import BaseScreen
 from .components import Button
+from core.time_controller import TimeController, SPEEDS, SPEED_LABELS
 from core.celestial_math import (
     AltAzProjection, OrthographicProjection, ALLSKY_FOV_THRESHOLD,
     PARMA_OBSERVER,
@@ -100,13 +101,9 @@ class SkychartScreen(BaseScreen):
         self._pre_allsky_alt = 30.0
         self._pre_allsky_fov = 80.0
 
-        # Time
-        self.time_utc    = datetime.now(timezone.utc)
-        self.time_paused = False
-        self.time_speed  = 1.0
-        self._time_accum = 0.0
-        self.lst_deg     = 0.0
-        self._update_lst()
+        # Time — usa TimeController condiviso per avanzamento fluido
+        self._tc      = TimeController()
+        self.lst_deg  = self._tc.lst(self.observer.longitude_deg)
 
         # Drag state
         self.dragging    = False
@@ -255,8 +252,7 @@ class SkychartScreen(BaseScreen):
     # -----------------------------------------------------------------------
 
     def _update_lst(self):
-        jd = julian_date(self.time_utc)
-        self.lst_deg = local_sidereal_time(jd, self.observer.longitude_deg)
+        self.lst_deg = self._tc.lst(self.observer.longitude_deg)
 
     # -----------------------------------------------------------------------
     # Lifecycle
@@ -264,7 +260,9 @@ class SkychartScreen(BaseScreen):
 
     def on_enter(self):
         super().on_enter()
-        self.time_utc     = datetime.now(timezone.utc)
+        # Risincronizza con l'orologio di sistema se in pausa o con speed=1
+        if self._tc.speed_idx <= 1:
+            self._tc.realtime()
         self._update_lst()
         self._next_screen = None
 
@@ -302,10 +300,18 @@ class SkychartScreen(BaseScreen):
                 elif k == pygame.K_t: self._goto_target()
                 elif k == pygame.K_s: self._set_as_target()
                 elif k == pygame.K_i: self._go_imaging()
-                elif k == pygame.K_SPACE: self.time_paused = not self.time_paused
-                elif k == pygame.K_F1: self.time_speed = 1.0
-                elif k == pygame.K_F2: self.time_speed = 60.0
-                elif k == pygame.K_F3: self.time_speed = 3600.0
+                # Controlli tempo
+                elif k == pygame.K_SPACE:  self._tc.toggle_pause()
+                elif k == pygame.K_PERIOD: self._tc.speed_up()    # > più veloce
+                elif k == pygame.K_COMMA:  self._tc.speed_down()  # < più lento
+                elif k == pygame.K_r:      self._tc.realtime()    # R = tempo reale
+                elif k == pygame.K_BACKSLASH: self._tc.reverse()  # \ = inverti
+                # Legacy F-keys
+                elif k == pygame.K_F1: self._tc.realtime()
+                elif k == pygame.K_F2: self._tc.set_speed_idx(3)   # 60×
+                elif k == pygame.K_F3: self._tc.set_speed_idx(5)   # 3600×
+                elif k == pygame.K_F4: self._tc.set_speed_idx(6)   # 86400×
+                elif k == pygame.K_F5: self._tc.set_speed_idx(7)   # week×
 
             elif event.type == pygame.MOUSEWHEEL:
                 self._zoom(0.85 if event.y > 0 else 1.15)
@@ -395,14 +401,9 @@ class SkychartScreen(BaseScreen):
     # -----------------------------------------------------------------------
 
     def update(self, dt: float):
-        if not self.time_paused:
-            import datetime as dtmod
-            self._time_accum += dt * self.time_speed
-            if self._time_accum >= 1.0:
-                secs = int(self._time_accum)
-                self.time_utc    = self.time_utc + dtmod.timedelta(seconds=secs)
-                self._time_accum -= secs
-                self._update_lst()
+        # Avanza il tempo di dt secondi reali — fluido, no accumulo a soglia
+        self._tc.step(dt)
+        self.lst_deg = self._tc.lst(self.observer.longitude_deg)
 
     # -----------------------------------------------------------------------
     # Render
@@ -848,15 +849,15 @@ class SkychartScreen(BaseScreen):
 
         lst_h = int(self.lst_deg / 15)
         lst_m = int((self.lst_deg / 15 - lst_h) * 60)
-        sp    = "PAUSED" if self.time_paused else f"x{self.time_speed:.0f}"
+        sp    = self._tc.speed_label
 
         if self._allsky_mode:
-            info = (f"  {self.time_utc.strftime('%Y-%m-%d %H:%M UTC')}  |  "
+            info = (f"  {self._tc.utc.strftime('%Y-%m-%d %H:%M UTC')}  |  "
                     f"LST {lst_h:02d}h{lst_m:02d}m  |  "
                     f"ALLSKY — zenith centred  |  {sp}  |  "
                     f"Stars: {visible_stars:,} (mag<{mag_limit:.1f})")
         else:
-            info = (f"  {self.time_utc.strftime('%Y-%m-%d %H:%M UTC')}  |  "
+            info = (f"  {self._tc.utc.strftime('%Y-%m-%d %H:%M UTC')}  |  "
                     f"LST {lst_h:02d}h{lst_m:02d}m  |  "
                     f"Az {self.proj.center_az:.1f}°  Alt {self.proj.center_alt:+.1f}°  |  "
                     f"FOV {self.proj.fov_deg:.1f}°  |  {sp}  |  "
@@ -867,12 +868,13 @@ class SkychartScreen(BaseScreen):
         t = title.render("SKY CHART  —  Parma 44.8°N 10.3°E", True, (0, 195, 85))
         surface.blit(t, (W//2 - t.get_width()//2, 5))
 
+        hint_time = "[,] slow  [.] fast  [Space] pause  [R] realtime  [\\\\] reverse"
         if self._allsky_mode:
-            hint = "  [+/Scroll up] Zoom in to exit  |  [Space] Pause  [ESC] Back"
+            hint = f"  [+/Scroll] Zoom  |  {hint_time}  |  [ESC] Back"
         else:
-            hint = ("  [+/-/Scroll] Zoom  [Drag/Arrows] Pan  "
-                    "[G]rid [C]onst [D]SO [L]abels [H]orizon  "
-                    "[T] Target  [S] Set  [I] Imaging  [Space] Pause  [ESC] Back")
+            hint = (f"  [+/-/Scroll] Zoom  [Drag/Arrows] Pan  "
+                    f"[G]rid [C]onst [D]SO [L]abels [H]orizon  "
+                    f"[T]arget [I]maging  |  {hint_time}  |  [ESC] Back")
         surface.blit(font.render(hint, True, (0, 80, 45)), (0, H-16))
 
         # Cursor Alt/Az + RA/Dec

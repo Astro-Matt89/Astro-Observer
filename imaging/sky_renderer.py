@@ -88,44 +88,53 @@ def sky_photons_per_pixel(sky_mag_arcsec2: float, aperture_cm: float,
     return max(0.0, phys * SKY_DISPLAY_BOOST)
 
 
-def bv_to_rgb(bv: float) -> Tuple[float, float, float]:
+def bv_to_rgb(bv: float, desaturate: float = 0.55) -> Tuple[float, float, float]:
     """
     Convert B-V color index to (R, G, B) multipliers.
-    Physical color of the star for display.
-    
-    B-V < 0.0  → blue-white (O/B stars)
-    B-V = 0.0  → white (A stars, like Vega)
-    B-V = 0.6  → yellow-white (G stars, like Sun)
-    B-V = 1.5  → deep orange-red (M stars)
+
+    desaturate: blend toward white (1.0) by this fraction.
+    Photographic allsky images show subtle, muted star colours —
+    not saturated LEDs. desaturate=0.55 gives realistic tones:
+    O/B stars: pale ice-blue, G stars: warm cream, M stars: brick-red.
+
+    B-V < 0.0  → ice-blue (O/B)
+    B-V = 0.0  → pure white (A stars, Vega)
+    B-V = 0.6  → warm white/cream (G, Sun)
+    B-V = 1.5  → dusty orange (K/M)
     """
     bv = max(-0.4, min(2.0, bv))
-    
+
     if bv < 0.0:       # O/B: blue-white
         t = (bv + 0.4) / 0.4
         r = 0.6 + 0.2 * t
         g = 0.7 + 0.3 * t
         b = 1.0
-    elif bv < 0.3:     # A/F: white to yellow-white
+    elif bv < 0.3:     # A/F: white
         t = bv / 0.3
         r = 0.8 + 0.2 * t
         g = 0.9 + 0.1 * t
         b = 1.0 - 0.2 * t
-    elif bv < 0.7:     # G: yellow-white (solar)
+    elif bv < 0.7:     # G: warm white
         t = (bv - 0.3) / 0.4
         r = 1.0
         g = 0.9
         b = 0.8 - 0.4 * t
-    elif bv < 1.2:     # K: orange
+    elif bv < 1.2:     # K: pale orange
         t = (bv - 0.7) / 0.5
         r = 1.0
         g = 0.9 - 0.4 * t
         b = 0.4 - 0.3 * t
-    else:              # M: deep red
+    else:              # M: dusty red
         t = min(1.0, (bv - 1.2) / 0.8)
         r = 1.0
         g = 0.5 - 0.3 * t
         b = 0.1
-    
+
+    # Desaturate toward white — photographic stars are never saturated LEDs
+    r = r + (1.0 - r) * desaturate
+    g = g + (1.0 - g) * desaturate
+    b = b + (1.0 - b) * desaturate
+
     return (r, g, b)
 
 

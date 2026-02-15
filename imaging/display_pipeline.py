@@ -164,11 +164,18 @@ def color_grade(img, warmth=0.0, teal_shadows=0.3, saturation=1.15, contrast=1.0
     return out.astype(np.float32)
 
 
-def to_surface(img, tw, th):
+def to_surface(img, tw, th, smooth: bool = False):
+    """Convert float32 [0,1] array to pygame Surface, upscaled to (tw,th).
+
+    smooth=True  → bilinear (smoothscale): best for allsky / circular renders
+    smooth=False → nearest-neighbour (scale): HD2D pixel-art look for telescope
+    """
     import pygame
     u8 = (np.clip(img,0,1)*255).astype(np.uint8)
     if u8.ndim == 2: u8 = np.stack([u8,u8,u8], axis=-1)
     surf = pygame.surfarray.make_surface(u8.swapaxes(0,1)).convert()
+    if smooth:
+        return pygame.transform.smoothscale(surf, (tw, th))
     return pygame.transform.scale(surf, (tw, th))
 
 
@@ -252,7 +259,8 @@ class DisplayPipeline:
         img = tone_map(mono, black, white, self.stretch)
         img = cinematic_curve(img)
         img = mono_to_rgb(img, *tint_rgb)
-        return to_surface(self._fx(img, advance_grain=True), self.display_w, self.display_h)
+        return to_surface(self._fx(img, advance_grain=True), self.display_w, self.display_h,
+                           smooth=getattr(self,'_smooth_upscale',False))
 
     def process_rgb(self, *args, **kwargs):
         """Accepts (rgb_HW3, black, white) or legacy (r, g, b, black, white)."""
@@ -270,7 +278,8 @@ class DisplayPipeline:
         if white is None: white = float(np.percentile(lum, 99.5))
         img = normalize_rgb(rgb, black, white, self.stretch)
         for c in range(3): img[:,:,c] = cinematic_curve(img[:,:,c])
-        return to_surface(self._fx(img, advance_grain=True), self.display_w, self.display_h)
+        return to_surface(self._fx(img, advance_grain=True), self.display_w, self.display_h,
+                           smooth=getattr(self,'_smooth_upscale',False))
 
     # legacy aliases
     def process_mono(self, *a, **kw): return self.process(*a, **kw)
