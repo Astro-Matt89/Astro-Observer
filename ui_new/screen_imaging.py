@@ -380,7 +380,17 @@ class ImagingScreen(BaseScreen):
             mag = min(6.0, (self._atm_state.naked_eye_limit - 0.5)
                       if self._atm_state else 6.0)
             mag = max(4.0, mag)   # always show at least bright stars
-            rgb = self.allsky_renderer.render(jd, uni, exp_s, mag, self._atm_state)
+            # Assicura che sole/luna abbiano posizione aggiornata
+            if self._sun is not None:
+                self._sun.update_position(jd, self._observer.latitude_deg,
+                                          self._observer.longitude_deg)
+            if self._moon is not None:
+                self._moon.update_position(jd, self._observer.latitude_deg,
+                                           self._observer.longitude_deg)
+            rgb = self.allsky_renderer.render(
+                jd, uni, exp_s, mag, self._atm_state,
+                sun_body=self._sun, moon_body=self._moon,
+                gain_sw=self.GAIN_STEPS[self.gain_idx])
             return rgb[:,:,0]*0.299 + rgb[:,:,1]*0.587 + rgb[:,:,2]*0.114, rgb
 
         mag_lim = min(10.0 + math.log10(max(1, exp_s)) * 1.5,
@@ -421,14 +431,18 @@ class ImagingScreen(BaseScreen):
 
     def _allsky_to_surface(self, arr: np.ndarray, sq: int) -> 'pygame.Surface':
         """
-        Photographic allsky tone mapping pipeline.
-        Renders to EXACTLY sq×sq pixels — no upscale distortion.
+        Luma-chroma preserving ADU tone mapping.
 
-        Pipeline:
-          1. Asinh stretch (adaptive white → sky at target brightness)
-          2. Layered gaussian blur (heavy on bg, light on stars)
-          3. Colour grade: push shadows toward steel-blue (not pure navy)
-          4. Subtle photographic grain
+        Applica il log stretch SOLO alla luma, poi riscala RGB mantenendo il
+        rapporto cromatico originale → i colori del tramonto/alba rimangono
+        saturi (blu, arancione, giallo) invece di convergere a grigio.
+
+        Fisicamente:
+          BLACK = 1 ADU, WHITE = 65535 ADU, gamma = 0.42
+          Gain scala il campo raw → stessa pipeline per qualsiasi gain
+          Diurno:  luma >> 65535 → tutto satura → bianco-azzurro ✓
+          Tramonto: cielo blu rimane blu, arancione rimane arancione ✓
+          Notte:   sky_bg_B > R → steel-blue preservato ✓
         """
         import pygame
         from scipy.ndimage import gaussian_filter as _gf
@@ -436,85 +450,55 @@ class ImagingScreen(BaseScreen):
         if arr.ndim == 2:
             arr = np.stack([arr, arr, arr], axis=-1)
 
-        _beta  = 0.03
-        _asnh1 = math.asinh(1.0 / _beta)
-        _sky_target = 45   # /255 — blue-grey sky visible but dark
-
-        # Inside-disk mask (exclude black border pixels from stats)
         S = arr.shape[0]; cx_ = cy_ = S * 0.5; rad_ = S * 0.5 - 2
         yy_, xx_ = np.mgrid[0:S, 0:S]
         inside_ = ((xx_-cx_)**2 + (yy_-cy_)**2) < rad_**2
 
-        lum_raw = arr[:,:,0]*0.299 + arr[:,:,1]*0.587 + arr[:,:,2]*0.114
-        sky_med = float(np.median(lum_raw[inside_])) if inside_.any() else 1.0
-        _t = math.sinh(_sky_target * _asnh1 / 255.0) * _beta
-        white = float(np.clip(sky_med / max(_t, 1e-9), 20.0, 600.0))
+        # Luma-preserving log stretch
+        # 1. Calcola luma fisica
+        luma = (arr[:,:,0]*0.299 + arr[:,:,1]*0.587 + arr[:,:,2]*0.114
+                ).astype(np.float64)
+        luma = np.maximum(luma, 0.01)
 
-        # Asinh stretch
+        # 2. Stretch logaritmico sulla luma
+        BLACK = 1.0; WHITE = 65535.0; GAMMA = 0.42
+        _lr = math.log10(WHITE / BLACK)
+        luma_m = (np.clip(np.log10(luma / BLACK) / _lr, 0.0, 2.0) ** GAMMA
+                  ).astype(np.float32)
+
+        # 3. Riscala ogni canale preservando crominanza (R/luma, G/luma, B/luma)
         out = np.zeros_like(arr, dtype=np.float32)
         for c in range(3):
-            t = np.clip(arr[:,:,c] / white, 0.0, 1.0)
-            out[:,:,c] = np.arcsinh(t / _beta) / _asnh1
+            out[:,:,c] = np.clip(
+                arr[:,:,c].astype(np.float64) / luma * luma_m, 0.0, 1.5
+            ).astype(np.float32)
+        # Clip a 1.0 (saturazione) ma permetti 1.5 prima del clip per evitare
+        # artefatti nei canali dominanti quando uno satura
 
-        lum = out[:,:,0]*0.299 + out[:,:,1]*0.587 + out[:,:,2]*0.114
+        # Normalizza: se qualche canale supera 1.0 (saturazione) scala giù
+        # in modo da produrre bianco corretto (R=G=B=255) invece di clip asimmetrico
+        peak = out.max(axis=2, keepdims=True)
+        over = np.maximum(peak, 1.0)
+        out = np.clip(out / over, 0.0, 1.0)
 
-        # Layered blur: bg gets heavy blur, bright stars stay sharp
-        # This simulates the inherent softness of fisheye optics
+        # Layered blur (fisheye PSF softness)
+        lum_post = out[:,:,0]*0.299 + out[:,:,1]*0.587 + out[:,:,2]*0.114
         bg_blur = np.zeros_like(out)
         for c in range(3): bg_blur[:,:,c] = _gf(out[:,:,c], sigma=1.8)
-        bright_w = np.clip(lum * 4.0, 0.0, 1.0) ** 2   # 0=sky, 1=star
-        out = bg_blur * (1 - bright_w[:,:,np.newaxis]) + out * bright_w[:,:,np.newaxis]
+        bright_w = np.clip(lum_post * 2.0, 0.0, 1.0) ** 2
+        out = bg_blur*(1-bright_w[:,:,np.newaxis]) + out*bright_w[:,:,np.newaxis]
 
-        # Colour grade: push dark regions toward steel-blue
-        # Real allsky: sky ≈ (38,50,82) not pure navy (0,0,100)
+        # Subtle grain
         lum2 = out[:,:,0]*0.299 + out[:,:,1]*0.587 + out[:,:,2]*0.114
-        dark_mask = np.clip(1.0 - lum2 * 4.0, 0.0, 1.0) ** 1.2
-        out[:,:,0] += dark_mask * 0.038    # lift reds in shadows
-        out[:,:,1] += dark_mask * 0.015    # lift greens slightly
-        out[:,:,2] -= dark_mask * 0.008    # slight blue reduction
-
-        # Subtle photographic grain
         _rng = np.random.default_rng(seed=42)
-        grain = _rng.standard_normal(lum2.shape).astype(np.float32) * 0.010
+        grain = _rng.standard_normal(lum2.shape).astype(np.float32) * 0.008
         for c in range(3): out[:,:,c] += grain * inside_
 
         u8 = (np.clip(out, 0.0, 1.0) * 255).astype(np.uint8)
         surf = pygame.surfarray.make_surface(u8.swapaxes(0, 1)).convert()
-
-        # Only rescale if render size doesn't match display size
         if surf.get_width() != sq or surf.get_height() != sq:
             surf = pygame.transform.smoothscale(surf, (sq, sq))
-
         return surf
-
-    # ── Acquire pipeline ──────────────────────────────────────────────────────
-    def _expose(self):
-        self._refresh_atm()
-        exp_s = self.EXP_STEPS[self.exp_idx]
-        n     = self.NL_STEPS[self.nl_idx]
-        name, ra, dec = self._target()
-        if self._atm_state and not self._atm_state.imaging_allowed:
-            ph = self._atm_state.day_phase.value.replace('_',' ').title()
-            self._log(f"⚠ {ph} (Sol {self._atm_state.solar_alt_deg:+.1f}°)")
-        self.status = f"Acquiring {n}×{exp_s}s…"
-        self._log(f"Expose {n}×{exp_s}s  [{name}]")
-        mono, rgb = self._sky_signal(exp_s)
-        self.live = mono; self.live_rgb = rgb
-        filt = "ALLSKY" if self.is_allsky else ("RGB" if self.color else "L")
-        for i in range(n):
-            meta = FrameMetadata(frame_type=FrameType.LIGHT, exposure_s=exp_s,
-                                 target_name=name, filter_name=filt)
-            self.lights.append(self.camera.capture_frame(
-                exp_s, mono, FrameType.LIGHT,
-                frame_seed=len(self.lights)+i, metadata=meta))
-        self.status = f"✓ {n}×{exp_s}s  ({len(self.lights)} lights total)"
-        self._log(f"  Done — {len(self.lights)} lights")
-        # Auto-acquire calibration frames if requested
-        if self.DARK_STEPS[self.dark_idx] > 0:
-            self._darks()
-        if self.FLAT_STEPS[self.flat_idx] > 0:
-            self._flats()
-        self._set_tab(2)   # jump to process tab
 
     def _darks(self):
         exp_s = self.EXP_STEPS[self.exp_idx]
