@@ -531,6 +531,33 @@ class ImagingScreen(BaseScreen):
             for i in range(n)]
         self.status = f"✓ {n} flats"; self._log(f"  {n} flats done")
 
+    def _expose(self):
+        """Acquisisci la sequenza di immagini lights."""
+        exp_s = self.EXP_STEPS[self.exp_idx]
+        n     = self.NL_STEPS[self.nl_idx]
+
+        self._log(f"Light frames: {n}×{exp_s}s …")
+
+        self.lights = []
+        for i in range(n):
+            # Genera il segnale sintetico del cielo
+            mono, rgb = self._sky_signal(exp_s)
+
+            # Crea il frame usando capture_frame (come in _flats e _darks)
+            frame = self.camera.capture_frame(
+                exp_s,
+                mono if mono is not None else np.zeros((512, 512), dtype=np.float32),
+                FrameType.LIGHT,
+                frame_seed=1000 + i,
+                metadata=FrameMetadata(
+                    frame_type=FrameType.LIGHT,
+                    exposure_s=exp_s,
+                    filter_name="L"))
+            self.lights.append(frame)
+
+        self.status = f"✓ {n} lights"
+        self._log(f"  {n} lights acquired")
+
     def _calibrate(self):
         if not self.lights: self._log("ERROR: no lights"); return
         self._log("Calibrating…")
