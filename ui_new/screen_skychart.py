@@ -418,7 +418,7 @@ class SkychartScreen(BaseScreen):
                                        if callable(body.apparent_diameter_arcsec) 
                                        else body.apparent_diameter_arcsec)
                     else:
-                        diam_arcsec = 1.0  # Point-like for comets
+                        diam_arcsec = 1.0  # Point-like for comets (coma is diffuse, no fixed diameter)
                     diam_px = diam_arcsec / max(1.0, arcsec_per_px)
                     r_hit = max(8, int(diam_px / 2) + 4)
                     d = math.hypot(pos[0] - px[0], pos[1] - px[1])
@@ -826,7 +826,7 @@ class SkychartScreen(BaseScreen):
                                if callable(body.apparent_diameter_arcsec) 
                                else body.apparent_diameter_arcsec)
             else:
-                diam_arcsec = 1.0  # Point-like for comets
+                diam_arcsec = 1.0  # Point-like for comets (coma is diffuse, no fixed diameter)
             diam_px = diam_arcsec / max(1.0, arcsec_per_px)
             r = max(3, min(18, int(diam_px / 2)))
             
