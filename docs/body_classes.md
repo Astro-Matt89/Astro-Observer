@@ -172,7 +172,20 @@ def phase_fraction(self) -> float:
 
 @property
 def apparent_diameter_arcsec(self) -> float:
-    """Apparent angular diameter in arcseconds."
+    """Apparent angular diameter in arcseconds.
+    ⚠️ @property on OrbitalBody — use body.apparent_diameter_arcsec (NO parentheses).
+    MinorBody has it as a plain method — use body.apparent_diameter_arcsec().
+    For generic code handling both types:
+        diam = body.apparent_diameter_arcsec() if callable(body.apparent_diameter_arcsec) else body.apparent_diameter_arcsec
+    "
+
+@property
+def ring_inclination_B(self) -> float:
+    """Saturn ring tilt angle B in degrees.
+    0=edge-on (~2025), ~27=maximum open (~2032).
+    Returns 0.0 for all non-Saturn bodies.
+    Prefer body.ring_inclination_B over calling saturn_ring_inclination_B(jd)
+    separately when you already have the OrbitalBody instance."
 ```
 
 ### Example Usage
@@ -286,7 +299,10 @@ def update_position(self, jd: float,
     """Calcola posizione e magnitudine alla data JD."
 
 def apparent_diameter_arcsec(self) -> float:
-    """Apparent angular diameter in arcseconds."""
+    """Apparent angular diameter in arcseconds.
+    ⚠️ Plain method on MinorBody — use body.apparent_diameter_arcsec() (WITH parentheses).
+    OrbitalBody has it as a @property (no parentheses).
+    """
 ```
 
 ### Example Usage
