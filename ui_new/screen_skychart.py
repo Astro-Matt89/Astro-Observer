@@ -971,24 +971,28 @@ class SkychartScreen(BaseScreen):
                 diam = (obj.apparent_diameter_arcsec() 
                         if callable(obj.apparent_diameter_arcsec) 
                         else obj.apparent_diameter_arcsec)
+                show_diameter = True
             else:
-                diam = 0.0  # Shouldn't happen for OrbitalBody
+                show_diameter = False
             
             if obj.is_sun:
                 row(f"The Sun — G2V star")
                 row(f"Mag: {obj.apparent_mag:+.2f}")
                 row(f"Distance: 1.000 AU")
-                row(f"Diameter: {diam:.0f}\"")
+                if show_diameter:
+                    row(f"Diameter: {diam:.0f}\"")
             elif obj.is_moon:
                 row(f"Earth's Moon")
                 row(f"Mag: {obj.apparent_mag:+.2f}")
                 row(f"Distance: {obj.distance_au * AU_TO_KM:.0f} km")
                 row(f"Phase: {int(obj.phase_fraction * 100)}%")
-                row(f"Diameter: {diam:.0f}\"")
+                if show_diameter:
+                    row(f"Diameter: {diam:.0f}\"")
             else:
                 row(f"Planet  mag {obj.apparent_mag:+.2f}")
                 row(f"Distance: {obj.distance_au:.3f} AU")
-                row(f"Diameter: {diam:.1f}\"")
+                if show_diameter:
+                    row(f"Diameter: {diam:.1f}\"")
                 if obj.has_phases:
                     row(f"Phase: {int(obj.phase_fraction * 100)}%")
                 if obj.uid == "SATURN":

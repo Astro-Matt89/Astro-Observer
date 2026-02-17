@@ -14,7 +14,7 @@ from .base_screen import BaseScreen
 from .components import Button, ScrollableList, TextInput, Checkbox
 from universe.space_object import SpaceObject, ObjectClass
 from universe.orbital_body import build_solar_system, OrbitalBody
-from universe.minor_bodies import build_minor_bodies
+from universe.minor_bodies import build_minor_bodies, MinorBody, CometBody
 from universe.planet_physics import saturn_ring_inclination_B
 from core.time_controller import TimeController
 from core.celestial_math import PARMA_OBSERVER, radec_to_altaz
@@ -121,15 +121,16 @@ class CatalogScreen(BaseScreen):
             if obj.mag > self.mag_limit:
                 continue
             
-            # Type filter
-            if obj.obj_class == ObjectClass.STAR and not self.filters['stars'].is_checked():
-                continue
-            if obj.obj_class == ObjectClass.GALAXY and not self.filters['galaxies'].is_checked():
-                continue
-            if obj.obj_class == ObjectClass.NEBULA and not self.filters['nebulae'].is_checked():
-                continue
-            if obj.obj_class == ObjectClass.CLUSTER and not self.filters['clusters'].is_checked():
-                continue
+            # Type filter (only for SpaceObject with obj_class attribute)
+            if hasattr(obj, 'obj_class'):
+                if obj.obj_class == ObjectClass.STAR and not self.filters['stars'].is_checked():
+                    continue
+                if obj.obj_class == ObjectClass.GALAXY and not self.filters['galaxies'].is_checked():
+                    continue
+                if obj.obj_class == ObjectClass.NEBULA and not self.filters['nebulae'].is_checked():
+                    continue
+                if obj.obj_class == ObjectClass.CLUSTER and not self.filters['clusters'].is_checked():
+                    continue
             
             # Catalog filter
             if self.catalog_filter != "ALL":
@@ -433,15 +434,35 @@ class CatalogScreen(BaseScreen):
                     B = saturn_ring_inclination_B(self._tc.jd)
                     info.append(f"Ring tilt B: {B:+.1f}°")
             else:
+                # Handle MinorBody, CometBody, and SpaceObject
+                # Determine type string with fallback for solar system bodies
+                if hasattr(obj, 'obj_class'):
+                    # SpaceObject (stars, DSO) with Enum type
+                    type_str = obj.obj_class.value.title()
+                elif isinstance(obj, CometBody):
+                    type_str = "Comet"
+                elif isinstance(obj, MinorBody):
+                    type_str = "Asteroid"
+                else:
+                    type_str = "Solar System Object"
+                
                 info = [
                     f"UID: {obj.uid}",
-                    f"Type: {obj.obj_class.value.title()}",
-                    f"Mag: {obj.mag:.2f}  Dist: {obj.distance_ly:.0f} ly",
+                    f"Type: {type_str}",
+                    f"Mag: {obj.mag:.2f}  Dist: {obj.distance_ly:.0f} ly" if hasattr(obj, 'distance_ly') else f"Mag: {obj.mag:.2f}",
                     f"RA: {obj.ra_deg:.2f}°  Dec: {obj.dec_deg:+.2f}°",
                 ]
                 
-                # Show cross-refs if available
-                if "cross_ref" in obj.meta:
+                # Handle apparent_diameter_arcsec for MinorBody (method) and CometBody (no attr)
+                if hasattr(obj, 'apparent_diameter_arcsec'):
+                    diam = (obj.apparent_diameter_arcsec() 
+                            if callable(obj.apparent_diameter_arcsec) 
+                            else obj.apparent_diameter_arcsec)
+                    if diam > 0.1:  # Only show meaningful diameters
+                        info.append(f"Diameter: {diam:.1f}\"")
+                
+                # Show cross-refs if available (only for SpaceObject)
+                if hasattr(obj, 'meta') and "cross_ref" in obj.meta:
                     xref = obj.meta["cross_ref"]
                     xref_str = "  ".join([f"{k}:{v}" for k, v in list(xref.items())[:3]])
                     info.append(f"IDs: {xref_str[:40]}")
