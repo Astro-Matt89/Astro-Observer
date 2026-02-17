@@ -46,6 +46,9 @@ from core.celestial_math import (
 from core.earth_renderer import EarthRenderer
 from core.constellation_data import get_constellation_lines, get_constellation_labels
 from universe import ObjectClass, ObjectSubtype
+from universe.orbital_body import build_solar_system
+from universe.minor_bodies import build_minor_bodies
+from universe.planet_physics import saturn_ring_inclination_B
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +62,9 @@ def _get_const_lines():
     if _CONSTELLATION_LINES_CACHE is None:
         _CONSTELLATION_LINES_CACHE = get_constellation_lines()
     return _CONSTELLATION_LINES_CACHE
+
+# Constants
+AU_TO_KM = 149597870.7  # 1 AU in kilometers (IAU standard)
 
 # DSO colours
 _DSO_COLORS = {
@@ -79,6 +85,21 @@ _DSO_COLORS = {
     ObjectSubtype.GALAXY_CLUSTER:    (255, 160, 200),
 }
 _DSO_DEFAULT = (160, 160, 160)
+
+# Planet colors
+_PLANET_COLORS = {
+    "SUN": (255, 255, 180), "MOON": (200, 200, 200),
+    "MERCURY": (180, 160, 140), "VENUS": (220, 210, 160),
+    "MARS": (210, 100, 60), "JUPITER": (200, 170, 130),
+    "SATURN": (210, 190, 140), "URANUS": (150, 210, 220),
+    "NEPTUNE": (100, 130, 220), "PLUTO": (150, 140, 130),
+}
+
+_PLANET_SYMBOLS = {
+    "SUN": "☉", "MOON": "☽", "MERCURY": "☿", "VENUS": "♀",
+    "MARS": "♂", "JUPITER": "♃", "SATURN": "♄",
+    "URANUS": "⛢", "NEPTUNE": "♆", "PLUTO": "♇",
+}
 
 
 class SkychartScreen(BaseScreen):
@@ -126,6 +147,14 @@ class SkychartScreen(BaseScreen):
         self.show_horizon_fill = True
         self.show_cardinals    = True
 
+        # Solar system bodies
+        self._solar_bodies = build_solar_system()
+        self._sun = next((b for b in self._solar_bodies if b.is_sun), None)
+        self._moon = next((b for b in self._solar_bodies if b.is_moon), None)
+        self._planets = [b for b in self._solar_bodies if not b.is_sun and not b.is_moon]
+        self._minor_bodies = build_minor_bodies()
+        self.show_planets = True  # toggle for planets visibility
+
         # 3D Earth renderer
         self._earth = EarthRenderer()
 
@@ -155,6 +184,7 @@ class SkychartScreen(BaseScreen):
             'horizon':      ('show_horizon',      "HORIZON"),
             'horiz_fill':   ('show_horizon_fill', "H.FILL"),
             'cardinals':    ('show_cardinals',    "COMPASS"),
+            'planets':      ('show_planets',      "PLANETS"),
         }
         self._tbtn = {}
         y = 280
@@ -297,6 +327,7 @@ class SkychartScreen(BaseScreen):
                 elif k == pygame.K_d: self._toggle('show_dso')
                 elif k == pygame.K_l: self._toggle('show_labels')
                 elif k == pygame.K_h: self._toggle('show_horizon')
+                elif k == pygame.K_p: self._toggle('show_planets')
                 elif k == pygame.K_t: self._goto_target()
                 elif k == pygame.K_s: self._set_as_target()
                 elif k == pygame.K_i: self._go_imaging()
@@ -370,6 +401,23 @@ class SkychartScreen(BaseScreen):
         elif fov > 1:  mag_limit = 11.5
         else:          mag_limit = 12.0
 
+        # Check planets first (before DSO)
+        if self.show_planets:
+            all_solar = self._planets + [self._moon, self._sun] + list(self._minor_bodies)
+            for body in all_solar:
+                alt, az = radec_to_altaz(body.ra_deg, body.dec_deg, self.lst_deg, self.observer.latitude_deg)
+                if alt < -2:
+                    continue
+                px = self.proj.project(alt, az)
+                if px and self.proj.is_on_screen(*px):
+                    fov_arcsec = self.proj.fov_deg * 3600.0
+                    arcsec_per_px = fov_arcsec / min(self.proj.width, self.proj.height)
+                    diam_px = body.apparent_diameter_arcsec() / max(1.0, arcsec_per_px)
+                    r_hit = max(8, int(diam_px / 2) + 4)
+                    d = math.hypot(pos[0] - px[0], pos[1] - px[1])
+                    if d < r_hit and d < best_dist:
+                        best_dist, best_obj = d, body
+
         if self.show_dso:
             for obj in universe.get_dso():
                 alt, az = radec_to_altaz(obj.ra_deg, obj.dec_deg,
@@ -404,6 +452,19 @@ class SkychartScreen(BaseScreen):
         # Avanza il tempo di dt secondi reali — fluido, no accumulo a soglia
         self._tc.step(dt)
         self.lst_deg = self._tc.lst(self.observer.longitude_deg)
+        
+        # Update solar system positions
+        jd = self._tc.jd
+        lat = self.observer.latitude_deg
+        lon = self.observer.longitude_deg
+        if self._sun:
+            self._sun.update_position(jd, lat, lon)
+        if self._moon:
+            self._moon.update_position(jd, lat, lon)
+        for body in self._planets:
+            body.update_position(jd, lat, lon)
+        for body in self._minor_bodies:
+            body.update_position(jd, lat, lon)
 
     # -----------------------------------------------------------------------
     # Render
@@ -443,6 +504,7 @@ class SkychartScreen(BaseScreen):
             self._draw_constellation_labels(surface)
         visible_stars = self._draw_stars(surface, mag_limit)
         if self.show_dso:     self._draw_dso(surface)
+        if self.show_planets: self._draw_planets(surface, mag_limit)
 
         # 3D Earth — occludes stars below horizon
         if self.show_horizon:
@@ -694,6 +756,137 @@ class SkychartScreen(BaseScreen):
             pygame.draw.circle(surface, color, px, max(3, s), 1)
 
     # -----------------------------------------------------------------------
+    # Draw: planets
+    # -----------------------------------------------------------------------
+
+    def _draw_planets(self, surface: pygame.Surface, mag_limit: float):
+        """
+        Draw Solar System bodies on sky chart.
+        
+        Visual encoding:
+          - Size: scaled from apparent_diameter_arcsec, min 3px, max 18px
+          - Color: from _PLANET_COLORS
+          - Saturn: thin ellipse ring proportional to B angle
+          - Moon: phase shading with terminator approximation
+          - Sun: 3-layer glow with alpha blending
+        
+        Rendering order: minor bodies → planets → Moon → Sun
+        """
+        import math
+        
+        font_label = pygame.font.SysFont('monospace', 10)
+        jd = self._tc.jd
+        
+        # --- Minor bodies first (background) ---
+        for body in self._minor_bodies:
+            if body.apparent_mag > mag_limit + 2:
+                continue
+            alt, az = radec_to_altaz(body.ra_deg, body.dec_deg, self.lst_deg, self.observer.latitude_deg)
+            if alt < -2:
+                continue
+            px = self.proj.project(alt, az)
+            if not px or not self.proj.is_on_screen(*px):
+                continue
+            
+            r = 3  # small dot for minor bodies
+            pygame.draw.circle(surface, (180, 180, 160), px, r)
+            
+            if self.show_labels and self.proj.fov_deg < 40:
+                lbl = font_label.render(body.name, True, (140, 140, 120))
+                surface.blit(lbl, (px[0] + r + 2, px[1] - 5))
+            
+            if self.selected_obj and getattr(self.selected_obj, 'uid', None) == body.uid:
+                pygame.draw.circle(surface, (255, 255, 0), px, r + 5, 1)
+        
+        # --- Planets ---
+        for body in self._planets:
+            alt, az = radec_to_altaz(body.ra_deg, body.dec_deg, self.lst_deg, self.observer.latitude_deg)
+            if alt < -2:
+                continue
+            px = self.proj.project(alt, az)
+            if not px or not self.proj.is_on_screen(*px):
+                continue
+            
+            color = _PLANET_COLORS.get(body.uid, (180, 180, 180))
+            
+            # Radius from apparent diameter scaled to FOV
+            fov_arcsec = self.proj.fov_deg * 3600.0
+            px_per_screen = min(self.proj.width, self.proj.height)
+            arcsec_per_px = fov_arcsec / px_per_screen
+            diam_px = body.apparent_diameter_arcsec() / max(1.0, arcsec_per_px)
+            r = max(3, min(18, int(diam_px / 2)))
+            
+            pygame.draw.circle(surface, color, px, r)
+            
+            # Saturn rings
+            if body.uid == "SATURN":
+                from universe.planet_physics import SATURN_RING_OUTER_KM, PLANET_EQUATORIAL_KM
+                B_deg = saturn_ring_inclination_B(jd)
+                ring_scale = SATURN_RING_OUTER_KM / PLANET_EQUATORIAL_KM["SATURN"]
+                ring_rx = int(r * ring_scale)
+                ring_ry = max(1, int(ring_rx * abs(math.sin(math.radians(B_deg)))))
+                ring_rect = pygame.Rect(px[0] - ring_rx, px[1] - ring_ry, ring_rx * 2, ring_ry * 2)
+                pygame.draw.ellipse(surface, (190, 170, 120), ring_rect, 1)
+            
+            # Labels
+            if self.show_labels and self.proj.fov_deg < 120:
+                lbl_text = f"{body.name} {body.apparent_mag:+.1f}"
+                lbl = font_label.render(lbl_text, True, color)
+                surface.blit(lbl, (px[0] + r + 3, px[1] - 5))
+            
+            if self.selected_obj and getattr(self.selected_obj, 'uid', None) == body.uid:
+                pygame.draw.circle(surface, (255, 255, 0), px, r + 5, 1)
+        
+        # --- Moon ---
+        body = self._moon
+        alt, az = radec_to_altaz(body.ra_deg, body.dec_deg, self.lst_deg, self.observer.latitude_deg)
+        if alt > -2:
+            px = self.proj.project(alt, az)
+            if px and self.proj.is_on_screen(*px):
+                fov_arcsec = self.proj.fov_deg * 3600.0
+                arcsec_per_px = fov_arcsec / min(self.proj.width, self.proj.height)
+                r = max(5, min(30, int(body.apparent_diameter_arcsec() / max(1.0, arcsec_per_px) / 2)))
+                
+                pygame.draw.circle(surface, (200, 200, 200), px, r)
+                
+                # Phase shading
+                phase = body.phase_fraction
+                if phase < 0.95:
+                    shade = pygame.Surface((r * 2 + 2, r * 2 + 2), pygame.SRCALPHA)
+                    shade_alpha = int((1.0 - phase) * 180)
+                    pygame.draw.circle(shade, (0, 4, 14, shade_alpha), (r + 1, r + 1), r)
+                    offset_x = int((0.5 - phase) * r * 2)
+                    surface.blit(shade, (px[0] - r - 1 + offset_x, px[1] - r - 1))
+                
+                if self.show_labels:
+                    lbl = font_label.render(f"Moon {body.apparent_mag:+.1f} ({int(phase*100)}%)", True, (200, 200, 200))
+                    surface.blit(lbl, (px[0] + r + 3, px[1] - 5))
+                
+                if self.selected_obj and getattr(self.selected_obj, 'uid', None) == "MOON":
+                    pygame.draw.circle(surface, (255, 255, 0), px, r + 5, 1)
+        
+        # --- Sun ---
+        body = self._sun
+        alt, az = radec_to_altaz(body.ra_deg, body.dec_deg, self.lst_deg, self.observer.latitude_deg)
+        if alt > -2:
+            px = self.proj.project(alt, az)
+            if px and self.proj.is_on_screen(*px):
+                fov_arcsec = self.proj.fov_deg * 3600.0
+                arcsec_per_px = fov_arcsec / min(self.proj.width, self.proj.height)
+                r = max(6, min(35, int(body.apparent_diameter_arcsec() / max(1.0, arcsec_per_px) / 2)))
+                
+                # 3-layer glow
+                for glow_r, glow_alpha in [(r * 3, 30), (r * 2, 60), (r, 255)]:
+                    glow_color = (255, 240, 150) if glow_alpha < 100 else (255, 255, 180)
+                    glow_surf = pygame.Surface((glow_r * 2 + 2, glow_r * 2 + 2), pygame.SRCALPHA)
+                    pygame.draw.circle(glow_surf, (*glow_color, glow_alpha), (glow_r + 1, glow_r + 1), glow_r)
+                    surface.blit(glow_surf, (px[0] - glow_r - 1, px[1] - glow_r - 1))
+                
+                if self.show_labels:
+                    lbl = font_label.render("Sun", True, (255, 255, 180))
+                    surface.blit(lbl, (px[0] + r + 3, px[1] - 5))
+
+    # -----------------------------------------------------------------------
     # Draw: horizon
     # -----------------------------------------------------------------------
 
@@ -739,6 +932,39 @@ class SkychartScreen(BaseScreen):
             nonlocal fy
             surface.blit(fs.render(text, True, col), (px+8, fy))
             fy += 16
+
+        # Check if it's an orbital body (planet/moon/sun)
+        from universe.orbital_body import OrbitalBody
+        if isinstance(obj, OrbitalBody):
+            surface.blit(fn.render(obj.name, True, (0, 255, 120)), (px+8, fy)); fy += 22
+            
+            if obj.is_sun:
+                row(f"The Sun — G2V star")
+                row(f"Mag: {obj.apparent_mag:+.2f}")
+                row(f"Distance: 1.000 AU")
+                row(f"Diameter: {obj.apparent_diameter_arcsec():.0f}\"")
+            elif obj.is_moon:
+                row(f"Earth's Moon")
+                row(f"Mag: {obj.apparent_mag:+.2f}")
+                row(f"Distance: {obj.distance_au * AU_TO_KM:.0f} km")
+                row(f"Phase: {int(obj.phase_fraction * 100)}%")
+                row(f"Diameter: {obj.apparent_diameter_arcsec():.0f}\"")
+            else:
+                row(f"Planet  mag {obj.apparent_mag:+.2f}")
+                row(f"Distance: {obj.distance_au:.3f} AU")
+                row(f"Diameter: {obj.apparent_diameter_arcsec():.1f}\"")
+                if obj.has_phases:
+                    row(f"Phase: {int(obj.phase_fraction * 100)}%")
+                if obj.uid == "SATURN":
+                    B = saturn_ring_inclination_B(self._tc.jd)
+                    row(f"Ring tilt B: {B:+.1f}°")
+            
+            row(obj.radec_str(), (125, 190, 125))
+            alt, az = radec_to_altaz(obj.ra_deg, obj.dec_deg, self.lst_deg, self.observer.latitude_deg)
+            vc = (0,255,0) if alt > 20 else (255,200,0) if alt > 0 else (200,80,80)
+            vis = "above horizon" if alt > 0 else "below horizon"
+            row(f"Alt {alt:+.1f}°  Az {az:.1f}°  — {vis}", vc)
+            return
 
         cat = obj.meta.get("catalog", "")
         num = obj.meta.get("catalog_num", "")
@@ -873,7 +1099,7 @@ class SkychartScreen(BaseScreen):
             hint = f"  [+/Scroll] Zoom  |  {hint_time}  |  [ESC] Back"
         else:
             hint = (f"  [+/-/Scroll] Zoom  [Drag/Arrows] Pan  "
-                    f"[G]rid [C]onst [D]SO [L]abels [H]orizon  "
+                    f"[G]rid [C]onst [D]SO [L]abels [H]orizon [P]lanets  "
                     f"[T]arget [I]maging  |  {hint_time}  |  [ESC] Back")
         surface.blit(font.render(hint, True, (0, 80, 45)), (0, H-16))
 
@@ -894,6 +1120,8 @@ class SkychartScreen(BaseScreen):
             ("□", (220, 80,  80),  "Emission Nebula"),
             ("○", (80,  220, 220), "Planetary Nebula"),
             ("○", (160, 200, 255), "Galaxy"),
+            ("●", (210, 190, 140), "Planet"),
+            ("●", (200, 200, 200), "Moon"),
         ]
         lf = pygame.font.SysFont('monospace', 10)
         lx, ly = W - 165, 30
