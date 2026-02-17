@@ -20,7 +20,7 @@ from core.time_controller import TimeController
 from core.celestial_math import PARMA_OBSERVER, radec_to_altaz
 
 # Constants
-AU_TO_KM = 149597870  # 1 AU in kilometers
+AU_TO_KM = 149597870.7  # 1 AU in kilometers (IAU standard)
 
 
 class CatalogScreen(BaseScreen):

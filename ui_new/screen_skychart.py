@@ -64,7 +64,7 @@ def _get_const_lines():
     return _CONSTELLATION_LINES_CACHE
 
 # Constants
-AU_TO_KM = 149597870  # 1 AU in kilometers
+AU_TO_KM = 149597870.7  # 1 AU in kilometers (IAU standard)
 
 # DSO colours
 _DSO_COLORS = {
@@ -788,7 +788,7 @@ class SkychartScreen(BaseScreen):
             if not px or not self.proj.is_on_screen(*px):
                 continue
             
-            r = max(2, 3)  # small dot
+            r = 3  # small dot for minor bodies
             pygame.draw.circle(surface, (180, 180, 160), px, r)
             
             if self.show_labels and self.proj.fov_deg < 40:
