@@ -413,15 +413,20 @@ class CatalogScreen(BaseScreen):
             
             # Check if it's an orbital body
             if isinstance(obj, OrbitalBody):
-                diam = (obj.apparent_diameter_arcsec() 
-                        if callable(obj.apparent_diameter_arcsec) 
-                        else obj.apparent_diameter_arcsec)
+                # Handle different body types: OrbitalBody (property), MinorBody (method), CometBody (no attr)
+                if hasattr(obj, 'apparent_diameter_arcsec'):
+                    diam = (obj.apparent_diameter_arcsec() 
+                            if callable(obj.apparent_diameter_arcsec) 
+                            else obj.apparent_diameter_arcsec)
+                else:
+                    diam = 0.0  # Shouldn't happen for OrbitalBody
                 info = [
                     f"UID: {obj.uid}",
                     f"Distance: {obj.distance_au:.4f} AU",
                     f"Apparent mag: {obj.apparent_mag:+.2f}",
-                    f"Diameter: {diam:.1f}\"",
                 ]
+                if diam > 0.1:  # Only show meaningful diameters
+                    info.append(f"Diameter: {diam:.1f}\"")
                 if obj.has_phases:
                     info.append(f"Phase: {int(obj.phase_fraction * 100)}%")
                 if obj.uid == "SATURN":
