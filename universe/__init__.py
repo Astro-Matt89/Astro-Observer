@@ -41,6 +41,22 @@ from .orbital_body import (
     equatorial_to_altaz,
 )
 
+from .planet_physics import (
+    apparent_magnitude,
+    apparent_diameter_arcsec,
+    saturn_ring_inclination_B,
+    get_planet_physical_data,
+    illuminated_fraction,
+)
+
+from .minor_bodies import (
+    MinorBody,
+    MinorBodyElements,
+    CometBody,
+    MinorBodyCatalog,
+    build_minor_bodies,
+)
+
 __all__ += [
     "OrbitalBody",
     "OrbitalElements",
@@ -48,4 +64,16 @@ __all__ += [
     "datetime_to_jd",
     "jd_to_centuries",
     "equatorial_to_altaz",
+    # planet_physics
+    "apparent_magnitude",
+    "apparent_diameter_arcsec",
+    "saturn_ring_inclination_B",
+    "get_planet_physical_data",
+    "illuminated_fraction",
+    # minor_bodies
+    "MinorBody",
+    "MinorBodyElements",
+    "CometBody",
+    "MinorBodyCatalog",
+    "build_minor_bodies",
 ]

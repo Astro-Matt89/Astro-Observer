@@ -1,306 +1,325 @@
 # Observatory Simulation Game
 
-Un simulatore astronomico realistico in stile retrò (DOS VGA, pixelart) per l'osservazione e l'imaging del cielo profondo.
+Un simulatore astronomico fotorealistico in stile retrò (DOS/VGA) con fisica reale, effemeridi accurate e sistema di imaging completo.
 
-![Version](https://img.shields.io/badge/version-0.1--alpha-blue)
 ![Python](https://img.shields.io/badge/python-3.11+-green)
-![License](https://img.shields.io/badge/license-MIT-orange)
-
-## 🌟 Features
-
-### ✅ Implementate (v0.1)
-
-- **Cataloghi Stellari**
-  - Sistema di indicizzazione spaziale per Hipparcos e Gaia DR3
-  - Query veloci su regioni di cielo
-  - Magnitudine limite dinamica basata su FOV
-
-- **Deep Sky Objects**
-  - Catalogo Messier (110 oggetti)
-  - Supporto per nebulose (HII, planetarie, riflessione, SNR)
-  - Supporto per galassie (spirali, ellittiche, irregolari)
-  - Ammassi aperti e globulari
-
-- **Generazione Procedurale**
-  - Asteroidi della main belt (distribuzione realistica)
-  - Comete periodiche e non-periodiche
-  - Nebulose procedurali con texture deterministiche
-  - Galassie procedurali
-
-- **Rendering Pixelart Realistico**
-  - Nebulose con simulazione filtri (H-alpha, OIII, SII, HOO, SHO)
-  - Galassie con bracci spirali, bulge, regioni HII
-  - Texture procedurali deterministiche (stesso seed = stessa texture)
-  - Colori realistici basati su fisica
-
-- **Sistema Imaging** (da astro2.py)
-  - Simulazione CCD/CMOS realistica
-  - Light, Dark, Flat, Bias frames
-  - Calibrazione completa
-  - Stacking (mean, median, sigma-clipping)
-  - Stretch istogramma e processing
-  - Noise realistico (shot noise, read noise, dark current)
-
-### 🚧 In Sviluppo
-
-- **Interfacce Complete**
-  - Sky Chart interattivo (base esistente da integrare)
-  - Imaging screen completo
-  - Observatory management
-  - Catalog browser avanzato
-
-- **Sistema Solare**
-  - Effemeridi planetarie accurate
-  - Lune, asteroidi, comete
-  - Meccaniche orbitali
-
-- **Career Mode**
-  - Progressione da piccolo telescopio a osservatorio professionale
-  - Sistema di scoperte e pubblicazioni
-  - Task scientifici
-  - Upgrade equipaggiamento
-
-## 🎮 Come Giocare
-
-### Requisiti
-
-```bash
-Python 3.11+
-pygame >= 2.5.0
-numpy >= 1.24.0
-```
-
-### Installazione
-
-```bash
-# Clone repository
-git clone [url]
-cd observatory_game
-
-# Install dependencies
-pip install -r requirements.txt
-
-# (Opzionale) Scarica cataloghi completi
-python tools/download_catalogs.py
-```
-
-### Avvio
-
-```bash
-# Main integrato (demo corrente)
-python main_integrated.py
-
-# Sistema skychart originale (richiede cataloghi)
-python main.py
-
-# Prototipo imaging standalone
-python astro2.py
-```
-
-### Controlli
-
-#### Globali
-- `TAB` - Cambia schermata
-- `ESC` - Esci
-- `F1` - Aiuto
-
-#### Sky Chart
-- `Mouse Wheel` - Zoom
-- `+/-` - Velocità tempo
-- `[/]` - Step temporale (±10 min)
-- `0` - Reset velocità tempo a 1x
-- `R` - Reset vista
-- Click sinistro - Seleziona stella/oggetto
-
-#### Imaging
-- `G` - Genera dataset (light/dark/flat)
-- `C` - Calibra e stacka
-- `1/2/3` - Visualizza RAW / CAL / STACK
-- `[/]` - Frame precedente/successivo
-- `H` - Toggle istogramma
-- `-/=` - Adjust black point
-- `,/.` - Adjust white point
-
-#### Demo
-- `1` - Render Messier objects
-- `2` - Render nebulose procedurali
-
-## 📁 Struttura Progetto
-
-```
-observatory_game/
-│
-├── core/                      # Sistemi base
-│   ├── coords.py              # Coordinate celesti, proiezioni
-│   ├── astro_time.py          # Tempo astronomico (JD, LST)
-│   ├── catalog_index.py       # Indicizzazione spaziale
-│   └── types.py               # Dataclass base
-│
-├── catalogs/                  # Cataloghi astronomici
-│   ├── deep_sky.py            # DSO (Messier, NGC)
-│   └── procedural.py          # Generazione procedurale
-│
-├── rendering/                 # Rendering pixelart
-│   └── nebula_renderer.py     # Nebulose, galassie
-│
-├── imaging/                   # Sistema imaging (da integrare)
-│   └── (da astro2.py)
-│
-├── ui/                        # Interfacce utente
-│   ├── screen_skychart.py     # Carta celeste
-│   └── screen_planetarium.py  # Planetario
-│
-├── data/                      # Dati
-│   └── catalogs/              # File cataloghi (da scaricare)
-│
-├── main.py                    # Entry point skychart
-├── main_integrated.py         # Entry point integrato
-├── astro2.py                  # Prototipo imaging standalone
-└── DESIGN.md                  # Design document completo
-```
-
-## 🔬 Tecnologie e Algoritmi
-
-### Astronomia
-- **Coordinate**: Equatoriali (RA/Dec), Orizzontali (Az/Alt), Cartesiane
-- **Proiezioni**: Azimuthal Equidistant per sky chart
-- **Tempo**: Julian Date, Local Sidereal Time
-- **Effemeridi**: VSOP87 (pianificato)
-
-### Rendering
-- **Noise Procedurale**: Multi-octave turbulence
-- **Forme Ellittiche**: Con position angle
-- **Bracci Spirali**: Spirali logaritmiche
-- **Filtri**: Simulazione H-alpha (656nm), OIII (501nm), SII (672nm)
-
-### Imaging
-- **Noise Model**: Shot noise (√N), Read noise, Dark current
-- **Calibrazione**: (Light - Dark) / Flat
-- **Stacking**: Mean, Median, Sigma-clipping rejection
-- **PSF**: Gaussiana con FWHM configurabile
-
-### RNG Deterministico
-- **SplitMix64** per hash
-- **NumPy PCG64** per distribzioni
-- Stesso seed globale = stesso universo procedurale
-
-## 🎨 Stile Grafico
-
-- **Palette**: VGA-inspired, 256 colori
-- **Font**: Monospaziati (Consolas, Courier)
-- **UI**: Bordi pixelati, panelli con outline
-- **Oggetti**: Pixelart realistico ma stilizzato
-- **Effetti**: Dithering per gradienti smooth
-
-## 📊 Performance
-
-### Ottimizzazioni Implementate
-- Indicizzazione spaziale tile-based per cataloghi
-- Caching texture procedurali
-- LOD per rendering stelle
-- Query magnitude-limited
-- Hard cap su oggetti renderizzati per frame
-
-### Benchmark Target
-- 60 FPS con 50k stelle visibili
-- Query catalogo < 5ms
-- Rendering DSO < 10ms per oggetto
-- Stacking 10 frames 512x512 < 1s
-
-## 🗺️ Roadmap
-
-### v0.2 - Interfacce Complete
-- [ ] Integrazione completa sky chart + imaging
-- [ ] Observatory management screen
-- [ ] Catalog browser con filtri
-- [ ] Tutorial interattivo
-
-### v0.3 - Sistema Solare
-- [ ] Effemeridi planetarie
-- [ ] Visualizzazione pianeti e lune
-- [ ] Tracking asteroidi/comete
-- [ ] Discovery mechanics
-
-### v0.4 - Career Mode
-- [ ] Progressione equipaggiamento
-- [ ] Sistema task scientifici
-- [ ] Scoperte e pubblicazioni
-- [ ] Research points e upgrade
-
-### v0.5 - Polish
-- [ ] Sound design
-- [ ] Effetti atmosferici (seeing, turbolenza)
-- [ ] Achievements
-- [ ] Save/Load system
-- [ ] Modding support
-
-### v1.0 - Release
-- [ ] Campagna completa career mode
-- [ ] Cataloghi completi (Gaia DR3 full)
-- [ ] Spettrografia
-- [ ] Fotometria avanzata
-- [ ] Multiplayer (osservatori condivisi?)
-
-## 🤝 Contributi
-
-Il progetto è in fase alpha. Contributi benvenuti per:
-- Cataloghi astronomici (CSV/JSON format)
-- Texture e sprite pixelart
-- Algoritmi astrometrici
-- Testing e bug report
-
-## 📝 Note Tecniche
-
-### Cataloghi Richiesti
-
-Per il funzionamento completo servono:
-
-1. **Hipparcos** (~120k stelle, mag < 7)
-   - Build con: `python tools/build_hipparcos_index.py`
-   - Output: `data/hip_index.npz`
-
-2. **Gaia DR3** (subset, mag < 12)
-   - Build con: `python tools/build_gaia_index_v2.py`
-   - Output: `data/gaia_index_v2.npz`
-
-3. **Messier** (già incluso nel codice)
-
-4. **NGC/IC** (pianificato)
-   - Sorgente: OpenNGC database
-
-### Accuratezza
-
-- **Coordinate**: Precisione 1 arcsec (sufficiente per imaging amatoriale)
-- **Magnitudine**: ±0.1 mag (realistica per osservazioni visuali)
-- **Tempo**: Ignora precessione/nutazione (errore <0.1° su 10 anni)
-- **Imaging**: Modello fisico semplificato ma qualitativamente corretto
-
-## 📚 Riferimenti
-
-### Astronomia
-- Hipparcos/Gaia catalogs (ESA)
-- Messier catalog
-- OpenNGC database
-
-### Algoritmi
-- Meeus, J. "Astronomical Algorithms"
-- Stellarium source code (proiezioni)
-- Astropy documentation
-
-### Game Design
-- Space Engine (procedural generation inspiration)
-- Universe Sandbox (physics simulation)
-- Kerbal Space Program (career progression)
-
-## 📄 Licenza
-
-MIT License - Vedi LICENSE file
-
-## 👨‍💻 Autore
-
-Sviluppato con passione per l'astronomia e il retro gaming!
+![Lines](https://img.shields.io/badge/codebase-~20k_lines-blue)
+![Status](https://img.shields.io/badge/status-sprint_13a-orange)
 
 ---
 
-**Status**: Alpha v0.1 - Core systems operational
-**Last Update**: 2026-02-08
+## Panoramica
+
+Il gioco simula un osservatorio astronomico con fisica reale end-to-end: dal calcolo delle effemeridi planetarie (VSOP87, Meeus) alla simulazione del sensore CCD/CMOS (fotoni → elettroni → ADU), passando per un modello atmosferico completo (Rayleigh scattering, estinzione, sky glow lunare). L'estetica è volutamente retrò — palette VGA, font monospace, UI a pannelli — ma la fisica sotto è da planetario professionale.
+
+**Entry point:** python main_app.py
+**Dipendenze:** pip install pygame numpy scipy
+
+---
+
+## Architettura
+
+```
+main_app.py                  # Entry point, game loop, screen router
+│
+├── ui_new/                  # Schermate principali (UI framework custom)
+│   ├── screen_skychart.py   # Carta celeste interattiva (~1600 righe)
+│   ├── screen_imaging.py    # Sistema imaging allsky + deep sky (~1100 righe)
+│   ├── screen_catalog.py    # Browser catalogo oggetti
+│   ├── screen_equipment.py  # Gestione telescopi, montature, camere
+│   ├── screen_observatory.py# Hub osservatorio
+│   ├── screen_career.py     # Career mode
+│   ├── components.py        # Widget riusabili (Button, Slider, Table...)
+│   ├── base_screen.py       # Base class schermate
+│   └── theme.py             # Palette colori VGA, font
+│
+├── universe/                # Universo e meccanica orbitale
+│   ├── orbital_body.py      # OrbitalBody: Sole, Luna, pianeti (Meeus/VSOP87)
+│   ├── planet_physics.py    # Magnitudini IAU 2012, anelli Saturno, diametri
+│   ├── minor_bodies.py      # MinorBody, CometBody, MinorBodyCatalog (MPC)
+│   ├── universe.py          # Contenitore stelle + DSO + corpi solari
+│   ├── procedural_lod.py    # LOD procedurale per stelle deboli
+│   ├── space_object.py      # SpaceObject base class
+│   ├── catalogue_loader.py  # Loader cataloghi
+│   └── npz_loader.py        # Loader NPZ (Gaia, Hipparcos)
+│
+├── imaging/                 # Pipeline imaging
+│   ├── allsky_renderer.py   # Renderer allsky (proiezione zenitale equidistante)
+│   ├── sky_renderer.py      # Renderer deep sky (FOV rettangolare)
+│   ├── solar_bodies_renderer.py # Sole, Luna, pianeti, oggetti minori
+│   ├── celestial_bodies.py  # Bloom fisico (fotoni → ADU → PSF)
+│   ├── camera.py            # Modello camera (ZWO 174MM, QHY 5III-462C...)
+│   ├── calibration.py       # Dark/Flat/Bias calibration
+│   ├── stacking.py          # Stacking (mean, median, sigma-clipping)
+│   ├── processing.py        # Stretch, histogram, processing
+│   ├── frames.py            # Frame types (LIGHT, DARK, FLAT, BIAS)
+│   ├── equipment.py         # Telescopi, ottiche, accessori
+│   ├── noise_model.py       # Shot noise, read noise, dark current
+│   └── display_pipeline.py  # Pipeline visualizzazione
+│
+├── atmosphere/              # Modello atmosferico fisico
+│   ├── atmospheric_model.py # Rayleigh, Mie, DayPhase, sky glow lunare
+│   └── day_phase.py         # Fase diurna/crepuscolare
+│
+├── catalogs/                # Cataloghi astronomici
+│   ├── star_catalog.py      # BSC + Hipparcos subset (~389k stelle)
+│   ├── messier_data.py      # 110 oggetti Messier
+│   ├── ngc_data.py          # Catalogo NGC/IC
+│   ├── deep_sky.py          # DSO loader
+│   └── data/                # File NPZ cataloghi (Gaia DR3, Hipparcos)
+│
+├── core/                    # Utility matematiche
+│   ├── time_controller.py   # TimeController (JD, velocità, reverse)
+│   ├── celestial_math.py    # Coordinate, proiezioni, trasformazioni
+│   ├── constellation_data.py# 33 costellazioni con linee
+│   └── coords.py            # Conversioni equatoriale <-> orizzontale
+│
+├── game/                    # Logica di gioco
+│   ├── career_mode.py       # Career mode, task, progressione
+│   └── state_manager.py     # Stato globale del gioco
+│
+└── rendering/
+    └── nebula_renderer.py   # Renderer nebulose (Sérsic, HII, clusters)
+```
+
+---
+
+## Implementato — Stato Attuale (Sprint 13a, Feb 2026)
+
+### Universo 3D
+
+- 389.110 stelle reali (Gaia DR3 + Hipparcos + Yale BSC) con posizioni J2000, magnitudine V, indice B-V, distanza
+- 207 oggetti deep-sky (Messier + NGC/IC) con tipo morfologico, dimensioni angolari, magnitudine superficiale
+- 33 costellazioni con linee e nomi, visibilità dipendente da magnitudine limite
+- LOD procedurale: stelle deboli generate deterministicamente per zona di cielo, ottimizzate per FOV e mag limit dinamica
+
+### Sistema Solare Completo
+
+**Pianeti (10):** Mercurio, Venere, Marte, Giove, Saturno, Urano, Nettuno, Plutone
+
+Per ciascuno:
+- Effemeridi kepleriane con elementi JPL J2000 + tassi secolari
+- Light-time correction — posizione apparente corretta per il ritardo di luce (43min per Giove, 4h per Nettuno)
+- Magnitudini IAU 2012 specifiche per pianeta (Mallama & Hilton 2018), non il generico H,G
+- Diametro apparente in arcsec calcolato dinamicamente (Giove: 31"–50", Saturno disco: 15"–20")
+- Fasi visibili per Mercurio e Venere (orbite interne)
+- Saturno: inclinazione anelli B con ciclo 29.5 anni (B~0° nel 2025, B~+27° nel 2032), magnitudine dipendente da B (differenza ~1.5 mag)
+
+**Sole:** VSOP87 low-precision (~0.01° accuratezza), limb darkening fisico, bloom multi-layer calibrato su fotoni reali, halo atmosferico, Belt of Venus anti-solare.
+
+**Luna:** Meeus Cap. 47 (~0.1°, 14 termini principali), fase corretta da elongazione, disco con terminatore e texture mare, bloom dipendente da fase.
+
+**Oggetti Minori (12 hardcoded + loader MPC scalabile):**
+- Cerere, Vesta, Pallade, Giunone, Hygiea, Interamnia, Davida (fascia principale)
+- Plutone (pianeta nano TNO)
+- 433 Eros, 99942 Apophis (Near-Earth Asteroids — Apophis con avvicinamento 2029)
+- 1P/Halley, 2P/Encke (comete periodiche con orbite ellittiche complete)
+
+**Architettura MPC scalabile:** `MinorBodyElements` in formato MPC nativo, `MinorBodyCatalog.from_mpc_file(path, aperture_cm=25.0)` già implementato — carica fino a 600k+ asteroidi da MPCORB.DAT filtrati per magnitudine raggiungibile con l'apertura del telescopio attivo. `CometBody` con orbite paraboliche/ellittiche e calcolo position angle coda anti-solare.
+
+### Atmosfera Fisica
+
+- Rayleigh scattering — colore blu del cielo dipendente da lunghezza d'onda
+- Estinzione atmosferica Bouger-Lambert, dipendente da airmass e B-V della stella
+- DayPhase — 8 fasi: notte, twilight astronomico/nautico/civile, alba/tramonto, giorno
+- Sky glow lunare Krisciunas-Schaefer — contributo lunare al fondo cielo
+- Seeing Kolmogorov — FWHM variabile che modifica il PSF del renderer
+- Rifrazione atmosferica Bennett — correzione altitudine apparente vicino all'orizzonte
+- Gradiente altitudinale allsky — estinzione dipendente dall'angolo zenitale per ogni pixel
+- Twilight glow direzionale — gradiente crepuscolare verso il Sole, Belt of Venus anti-solare
+
+### Allsky Camera
+
+**Proiezione:** zenitale equidistante 180° FOV, cerchio perfetto a qualsiasi risoluzione, render 1:1 senza upscale.
+
+**Pipeline rendering (campo raw in fotoni fisici):**
+1. Background sky fisico con gradiente altitudinale + noise organico 3 ottave
+2. Atmospheric glow direzionale (Sole/Belt of Venus)
+3. Stelle con PSF dipendente da magnitudine (1px deboli, 3×3 medie, 5×5 brillanti)
+4. Sole con bloom multi-layer fisico (5 layer sigma 3→175px, calibrati su overflow ratio)
+5. Luna con fase, terminatore, bloom 4 layer calibrato su foto reali allsky
+6. Pianeti con PSF scalato su diametro apparente, maschera di fase per Mercurio/Venere, ellisse anelli per Saturno
+7. Oggetti minori come punti stellari con flusso fisico
+
+**Tone mapping luma-chroma preserving:** stretch logaritmico sulla LUMA (black=1 ADU, white=65535, gamma=0.42), colori preservati — tramonto arancione resta arancione, cielo notturno B-V preservato, cielo diurno satura naturalmente a bianco-azzurro.
+
+**Gain software (0–400):** `gain_mult = gain_ref_e_adu / gain_eff_e_adu` applicato a stelle, background e bloom. gain=50: cielo nero, solo stelle brillanti. gain=400: cielo steel-blue, centinaia di stelle.
+
+**Modelli camera:** ZWO ASI 174MM (mono, QE 78%, full well 14ke−), QHY 5III-462C (colore).
+
+### Sky Chart Interattivo
+
+- Proiezione azimuthal equidistant con zoom 1°–180° FOV
+- Stelle con PSF dipendente da magnitudine, colore B-V realistico
+- DSO con rendering morfologico (galassie ellisse, nebulose glow, cluster punti)
+- Costellazioni: 33 pattern con linee, visibilità adattiva per mag limit
+- Griglia RA/Dec, reticolo, info stelle al click
+- TimeController condiviso con ImagingScreen: JD floating-point, 8 velocità (pausa → 1 settimana/s), reverse, sync real-time
+
+### Imaging Screen (3 tab)
+
+- TAB 0 LIVE VIEW: preview allsky real-time aggiornata ogni 2s, controlli esposizione e gain
+- TAB 1 CAPTURE: acquisizione sequenza lights N×esposizione, dark/flat/bias
+- TAB 2 PROCESS: calibrazione, stacking, stretch istogramma con slider Black/White/Gamma
+
+### Sistema Imaging Deep Sky
+
+- Pipeline fisica: mag_to_flux → fotoni → elettroni (QE) → ADU (gain)
+- PSF gaussiano con FWHM dal seeing atmosferico (Kolmogorov)
+- DSO rendering: profilo Sérsic per galassie, Gaussian per nebulose, punti per cluster
+- Colori B-V con conversione spettrale realistica
+- Noise model: shot noise √N, read noise gaussiano, dark current lineare
+
+### Modello Fisico Bloom
+
+- Overflow ratio: electrons/FW_electrons → dimensione PSF bloom
+- Multi-layer PSF: sigma 3px core → 8px inner halo → 20px mid → 50px wide
+- Gain multiplier: gain alto → più ADU → bloom più esteso e intenso
+
+### Altre Schermate
+
+- Career Mode: struttura task e obiettivi, progressione equipaggiamento, sistema punti ricerca
+- Equipment Manager: database telescopi, camere, montature; calcolatore FOV e scala pixel
+- Catalog Browser: ricerca per nome/tipo/magnitudine/costellazione, preview DSO
+
+---
+
+## Da Implementare — Backlog Ordinato
+
+### Sprint 13b — Integrazione Sky Chart + Pianeti (prossimo)
+
+- [ ] Pianeti visibili nello sky chart con simboli e label (attualmente assenti)
+- [ ] Oggetti minori nello sky chart (Cerere, Vesta visibili a occhio nudo)
+- [ ] Tooltip pianeta al click: magnitudine, distanza, fase, diametro apparente
+- [ ] Saturno con indicazione inclinazione anelli nel tooltip
+- [ ] Pianeti nel Catalog Browser (sezione Solar System)
+- [ ] Etichette automatiche congiunzioni/opposizioni vicine nel timeframe corrente
+- [ ] Coerenza visiva sky chart ↔ allsky: stesso oggetto, stesso simbolo/colore
+
+### Sprint 14 — Seeing e Meteo
+
+- [ ] Seeing variabile nel tempo — modulazione temporale del FWHM (Kolmogorov + bassa frequenza)
+- [ ] Scintillazione stelle — twinkling visibile nel live view come perturbazione rapida
+- [ ] Modello meteo semplice — trasparenza variabile (0–100%)
+- [ ] Nuvole procedurali — texture che si muovono e occultano stelle/pianeti
+- [ ] Umidità e turbolenza — influenzano seeing e limiting magnitude
+- [ ] Forecast meteo in-game — dati simulati per pianificare sessioni
+- [ ] Rugiada/ghiaccio su ottica — riduce throughput, richiede riscaldamento
+
+### Sprint 15 — VFX e Fluidità (2 layer)
+
+**Layer fisico (1–2s, invariato):**
+- Frame fisicamente accurato come ora
+
+**Layer visivo real-time (su frame precedente, ~15fps):**
+- [ ] Interpolazione inter-frame per transizioni giorno/notte fluide
+- [ ] Twinkling stelle come perturbazione sul frame già renderizzato
+- [ ] Nuvole animate come overlay semitrasparente
+- [ ] Transizioni cromatiche del cielo fluide durante accelerazione tempo
+
+**VFX aggiuntivi:**
+- [ ] Via Lattea come texture procedurale diffusa (alto impatto visivo, costo basso)
+- [ ] Aerei e satelliti in transito (puramente grafici, danno vita all'immagine)
+- [ ] Colori stelle più saturi nell'allsky (B-V più pronunciato come nelle foto reali)
+- [ ] Lens flare direzionale quando il Sole è vicino al bordo del cerchio
+- [ ] Diffraction spikes per stelle brillanti (dipendenti dall'ottica)
+
+### Sprint 16 — Oggetti Minori Avanzati
+
+- [ ] Loader MPCORB.DAT attivo — già strutturato in MinorBodyCatalog.from_mpc_file(), serve il file e il collegamento all'apertura del telescopio attivo
+- [ ] Asteroidi NEA come eventi in-game (avvicinamenti, missioni di osservazione)
+- [ ] Comete attive con chioma e coda visibile nell'allsky e sky chart
+- [ ] Effemeridi comete da file MPC aggiornabili
+- [ ] Occultazioni — asteroide che transita davanti a una stella (evento raro)
+- [ ] Apophis 2029 come evento fisso in-game (13 aprile, passaggio <40.000 km, mag ~+3)
+
+### Sprint 17 — Career Mode Completo
+
+- [ ] Missioni astronomiche strutturate (scoperta asteroidi, fotometria variabili, imaging DSO)
+- [ ] Sistema reputazione e pubblicazioni scientifiche
+- [ ] Upgrade telescopio progressivo (apertura, montatura, camera)
+- [ ] Condizioni meteo che influenzano disponibilità notti
+- [ ] Log automatico sessioni con statistiche
+- [ ] Obiettivi stagionali (congiunzioni, opposizioni, comete)
+- [ ] Sistema finanziamento osservatorio (grant, scoperte, imaging)
+
+### Sprint 18 — Spettrografia e Fotometria
+
+- [ ] Simulazione spettro stellare da tipo spettrale
+- [ ] Fotometria differenziale (misura variazione magnitudine)
+- [ ] Curve di luce variabili (Cefeidi, RR Lyrae, eclissanti)
+- [ ] Riduzione dati spettrali
+- [ ] Astrometria — misura posizione precisa asteroidi
+
+### Lungo Termine
+
+- [ ] Catalogo Gaia DR3 completo (1.8 miliardi di stelle, caricamento lazy per FOV)
+- [ ] Multiplayer — osservatori condivisi, collaborazione su scoperte
+- [ ] Modding support — telescopi custom, DSO aggiuntivi, task
+- [ ] Esportazione FITS reali compatibili con AstroPixelProcessor/Siril
+- [ ] Lune planetarie (Galileane, Titano) con orbite accurate
+
+---
+
+## Fisica e Algoritmi — Riferimenti
+
+| Area | Fonte |
+|------|-------|
+| Sole (posizione) | VSOP87 low-precision, Meeus Cap. 25 |
+| Luna (posizione) | Meeus Cap. 47, 14 termini principali |
+| Pianeti (orbite) | JPL DE430 / Standish 1992, elementi J2000 |
+| Magnitudini pianeti | Mallama & Hilton 2018, PASP 130, 014201 |
+| Atmosfera Rayleigh | dipendenza λ⁻⁴, coefficienti standard |
+| Estinzione | legge Bouger-Lambert, banda V |
+| Sky glow lunare | Krisciunas-Schaefer (1991) |
+| Seeing | turbolenza Kolmogorov, r₀ di Fried |
+| Rifrazione | formula Bennett (1982) |
+| Flusso stelle | f = f₀ × 10^(-0.4×mag), f₀ = 9.83×10⁷ ph/s/cm² |
+| Gain ZWO | g_eff = 3.6 / (1 + gain_sw/55) e/ADU |
+| Tone mapping | luma-chroma preserving, gamma=0.42 |
+
+---
+
+## Controlli
+
+| Tasto | Azione |
+|-------|--------|
+| TAB | Prossima schermata |
+| ESC | Menu / Esci |
+| Space | Pausa/Riprendi tempo |
+| F1–F6 | Velocità tempo (×0, ×1, ×10, ×60, ×3600, ×86400) |
+| R | Reverse tempo |
+| \\ | Sync tempo reale |
+| Mouse drag | Pan sky chart |
+| Scroll | Zoom sky chart |
+| Click | Seleziona/info oggetto |
+
+---
+
+## Note per Sviluppo Futuro
+
+### File critico: screen_imaging.py
+`ui_new/screen_imaging.py` (~1100 righe) è il file più complesso. Gestisce sia allsky che deep sky imaging. La funzione `_expose()` ha subito un bugfix manuale dall'utente (Feb 2026) — non sovrascrivere senza integrare quella versione.
+
+### Aggiungere un telescopio
+In `imaging/equipment.py`, aggiungere a `TELESCOPE_DATABASE` con i campi: uid, name, aperture_mm, focal_length_mm, obstruction_pct.
+
+### Aggiungere una camera
+In `imaging/camera.py`, aggiungere a `CAMERA_DATABASE` con: uid, sensor_w, sensor_h, pixel_size_um, quantum_efficiency, full_well_e, read_noise_e, dark_current_e_per_s.
+
+### Caricare asteroidi MPC
+```python
+from universe.minor_bodies import MinorBodyCatalog
+# Scarica MPCORB.DAT da https://www.minorplanetcenter.net/iau/MPCORB.html
+catalog = MinorBodyCatalog.from_mpc_file("MPCORB.DAT", aperture_cm=25.0)
+# catalog.bodies contiene tutti gli asteroidi visibili con quell'apertura
+```
+
+### Allsky tone mapping
+Il mapping è luma-chroma preserving: applica log stretch sulla luminanza, preserva il rapporto R:G:B. Black=1 ADU, White=65535 ADU (16-bit full scale), gamma=0.42. Non usare tone mapping per-canale separato — desatura i colori.
+
+---
+
+*Sprint 13a completato: sistema solare completo, oggetti minori, fisica IAU 2012*
+*Codebase: ~20.000 righe Python (esclusi backup e file obsoleti)*
+*Ultima modifica: Febbraio 2026*

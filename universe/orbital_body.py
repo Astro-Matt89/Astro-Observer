@@ -422,52 +422,58 @@ class OrbitalBody(SpaceObject):
         if self.orbital_elements is None:
             return
 
+        from .planet_physics import apparent_magnitude, light_time_correction_days
+
         elems = self.orbital_elements.at_epoch(T)
 
         # Heliocentric ecliptic coords of planet
         x_p, y_p, z_p = heliocentric_ecliptic(elems)
 
-        # Heliocentric ecliptic coords of Earth (approximate)
+        # Heliocentric ecliptic coords of Earth
         earth_elems = _EARTH_ELEMENTS.at_epoch(T)
         x_e, y_e, z_e = heliocentric_ecliptic(earth_elems)
 
-        # Geocentric ecliptic
+        # Geocentric ecliptic (first pass — no light-time)
         dx = x_p - x_e
         dy = y_p - y_e
         dz = z_p - z_e
-        self._distance_au = math.sqrt(dx*dx + dy*dy + dz*dz)
+        delta = math.sqrt(dx*dx + dy*dy + dz*dz)
+
+        # Light-time correction: recalculate planet position at jd - light_time
+        # Significant for outer planets (Jupiter: ~43min, Neptune: ~4h)
+        lt_days = light_time_correction_days(delta)
+        if lt_days > 0.001:   # >1.4 min — worth correcting
+            T_lt = jd_to_centuries(jd - lt_days)
+            elems_lt = self.orbital_elements.at_epoch(T_lt)
+            x_p, y_p, z_p = heliocentric_ecliptic(elems_lt)
+            dx = x_p - x_e
+            dy = y_p - y_e
+            dz = z_p - z_e
+            delta = math.sqrt(dx*dx + dy*dy + dz*dz)
+
+        self._distance_au = delta
 
         # Ecliptic → equatorial
         x_eq, y_eq, z_eq = ecliptic_to_equatorial(dx, dy, dz)
         self._ra_computed, self._dec_computed = xyz_to_radec(x_eq, y_eq, z_eq)
 
-        # Phase angle
+        # Heliocentric distance of planet
         r_sun = math.sqrt(x_p**2 + y_p**2 + z_p**2)
-        r_earth = self._distance_au
-        r_planet_sun = r_sun
-        # cos(phase) = (r² + Δ² - R²) / (2rΔ)  where R=helio dist, Δ=geo dist
-        cos_phase = (r_planet_sun**2 + r_earth**2 - r_sun**2) / (2*r_planet_sun*r_earth + 1e-9)
-        self._phase_angle = math.degrees(math.acos(max(-1,min(1,cos_phase))))
 
-        # Apparent magnitude (Muller 1893 / Bowell 1989 simplified)
-        self._apparent_mag = self._planet_magnitude(r_planet_sun, r_earth, self._phase_angle)
+        # Phase angle: Sun–Planet–Earth
+        r_earth_sun = math.sqrt(x_e**2 + y_e**2 + z_e**2)
+        cos_phase = (r_sun**2 + delta**2 - r_earth_sun**2) / (2*r_sun*delta + 1e-9)
+        self._phase_angle = math.degrees(math.acos(max(-1.0, min(1.0, cos_phase))))
+
+        # Accurate apparent magnitude per planet (Mallama & Hilton 2018)
+        self._apparent_mag = apparent_magnitude(
+            self.uid, r_sun, delta, self._phase_angle, jd
+        )
 
         alt, az = equatorial_to_altaz(self._ra_computed, self._dec_computed,
                                        lat, lon, jd)
         self._alt_deg = alt
         self._az_deg  = az
-
-    def _planet_magnitude(self, r_sun: float, r_earth: float,
-                           phase_deg: float) -> float:
-        """V magnitude from absolute magnitude H and distances."""
-        g = math.radians(phase_deg)
-        # H,G system (G=0.15 default)
-        G = 0.15
-        phi1 = math.exp(-3.33 * math.tan(g/2)**0.63)
-        phi2 = math.exp(-1.87 * math.tan(g/2)**1.22)
-        return (self.absolute_mag
-                - 2.5 * math.log10((1-G)*phi1 + G*phi2)
-                + 5.0 * math.log10(r_sun * r_earth))
 
     # ------------------------------------------------------------------
     # Convenience
@@ -497,6 +503,25 @@ class OrbitalBody(SpaceObject):
     def phase_fraction(self) -> float:
         """Illuminated fraction 0..1 (for Moon/planets)."""
         return (1.0 + math.cos(math.radians(self._phase_angle))) / 2.0
+
+    @property
+    def apparent_diameter_arcsec(self) -> float:
+        """Apparent angular diameter in arcseconds."""
+        from .planet_physics import apparent_diameter_arcsec as _adas
+        return _adas(self.uid, self._distance_au)
+
+    @property
+    def ring_inclination_B(self) -> float:
+        """Saturn ring inclination B in degrees (0=edge-on, ~27=max open). 0 for others."""
+        if self.uid == "SATURN" and self._jd > 0:
+            from .planet_physics import saturn_ring_inclination_B
+            return saturn_ring_inclination_B(self._jd)
+        return 0.0
+
+    @property
+    def has_phases(self) -> bool:
+        """True for Mercury and Venus (inner planets with visible phases)."""
+        return self.uid in ("MERCURY", "VENUS")
 
     def __repr__(self) -> str:
         return (f"<OrbitalBody {self.uid} '{self.name}' "
@@ -643,4 +668,14 @@ def build_solar_system() -> list[OrbitalBody]:
          44.96476227,-0.32241464,
          131.78422574,-0.00508664))
 
-    return [sun, moon, mercury, venus, mars, jupiter, saturn, uranus, neptune]
+    # Plutone — pianeta nano (elementi JPL Horizons 2024)
+    pluto = planet("PLUTO","Pluto", 0.87, 1188.3, 0.575, 1.00,
+        "Pluto — dwarf planet, Kuiper Belt Object. New Horizons flyby 2015.",
+        (39.48211675,-0.00031596,
+          0.24882730, 0.00005170,
+         17.14001206, 0.00004818,
+         238.92903833, 145.20780515,
+         224.06891629,-0.04062942,
+         110.30393684,-0.01183482))
+
+    return [sun, moon, mercury, venus, mars, jupiter, saturn, uranus, neptune, pluto]

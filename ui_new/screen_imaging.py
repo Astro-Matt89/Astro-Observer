@@ -22,6 +22,7 @@ from imaging.sky_renderer import SkyRenderer
 from imaging.display_pipeline import DisplayPipeline
 from atmosphere import AtmosphericModel, ObserverLocation
 from universe.orbital_body import build_solar_system
+from universe.minor_bodies import build_minor_bodies
 from core.time_controller import TimeController
 from datetime import datetime, timezone as _tz
 
@@ -150,8 +151,14 @@ class ImagingScreen(BaseScreen):
             name="Observatory", limiting_mag_zenith=21.5, base_seeing_arcsec=2.5)
         self._atm_model    = AtmosphericModel(self._observer)
         self._solar_bodies = build_solar_system()
-        self._sun  = next(b for b in self._solar_bodies if b.is_sun)
-        self._moon = next(b for b in self._solar_bodies if b.is_moon)
+        self._sun   = next(b for b in self._solar_bodies if b.is_sun)
+        self._moon  = next(b for b in self._solar_bodies if b.is_moon)
+        # Planets (tutti tranne Sole e Luna) + oggetti minori
+        self._planets     = [b for b in self._solar_bodies
+                              if not b.is_sun and not b.is_moon]
+        self._minor_bodies = build_minor_bodies()
+        # Lista completa per il renderer (Sole+Luna+pianeti+minori)
+        self._all_solar    = self._solar_bodies + self._minor_bodies
         self._atm_state    = None
         self._tc           = TimeController()
 
@@ -387,9 +394,17 @@ class ImagingScreen(BaseScreen):
             if self._moon is not None:
                 self._moon.update_position(jd, self._observer.latitude_deg,
                                            self._observer.longitude_deg)
+            # Aggiorna pianeti e oggetti minori
+            lat = self._observer.latitude_deg
+            lon = self._observer.longitude_deg
+            for body in self._planets:
+                body.update_position(jd, lat, lon)
+            for body in self._minor_bodies:
+                body.update_position(jd, lat, lon)
             rgb = self.allsky_renderer.render(
                 jd, uni, exp_s, mag, self._atm_state,
                 sun_body=self._sun, moon_body=self._moon,
+                solar_bodies=self._all_solar,
                 gain_sw=self.GAIN_STEPS[self.gain_idx])
             return rgb[:,:,0]*0.299 + rgb[:,:,1]*0.587 + rgb[:,:,2]*0.114, rgb
 

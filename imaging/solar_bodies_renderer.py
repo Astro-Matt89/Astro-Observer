@@ -231,10 +231,133 @@ def _paint_moon_disk(field, px, py, radius_px, phase_angle_deg, intensity, colou
         field[y0:y1, x0:x1, c] += mask * intensity * col
 
 
-# ── Dispatcher ────────────────────────────────────────────────────────────────
+# ── Planets & Minor Bodies ────────────────────────────────────────────────────
+
+def render_planet(field, body, cx, cy, radius, exposure_s=1.0):
+    """
+    Render a planet or minor body onto the allsky photon field.
+
+    Usa le magnitudini fisiche accurate da planet_physics.
+    Per pianeti con diametro apparente > 1px disegna un disco.
+    Per Saturno aggiunge un'ellisse per gli anelli.
+    Per Mercurio/Venere applica la maschera di fase.
+    """
+    alt = body.altitude_deg
+    az  = body.azimuth_deg
+    mag = body.apparent_mag
+
+    if alt < 0.5:
+        return
+    pos = _altaz_to_xy(alt, az, cx, cy, radius)
+    if pos is None:
+        return
+    px, py = pos
+
+    # Colore B-V → RGB
+    from imaging.sky_renderer import bv_to_rgb, mag_to_flux
+    bv = getattr(body, 'bv_base', None) or getattr(body, 'bv_color', 0.6)
+    # Correzione colore per fase (Venere, Marte)
+    from universe.planet_physics import phase_bv_correction
+    phase_deg = getattr(body, '_phase_angle', 0.0)
+    bv = phase_bv_correction(bv, phase_deg, body.uid)
+    rc, gc, bc = bv_to_rgb(bv)
+
+    # Flusso fisico in fotoni (stessa pipeline delle stelle)
+    airmass = 1.0 / max(math.sin(math.radians(alt)), 0.05)
+    ext_mag = 0.20 * airmass   # estinzione atmosferica standard
+    eff_mag = mag + ext_mag
+
+    # Area apertura allsky (cm²) — dal renderer
+    area_cm2 = math.pi * 1.25**2   # 25mm apertura, come allsky
+    photons = mag_to_flux(eff_mag, area_cm2, exposure_s) * 0.78   # QE
+
+    if photons < 0.01:
+        return
+
+    # Diametro apparente in pixel
+    diam_arcsec = getattr(body, 'apparent_diameter_arcsec',
+                           lambda: 0.0)() if callable(
+                           getattr(body, 'apparent_diameter_arcsec', None)
+                           ) else getattr(body, 'apparent_diameter_arcsec', 0.0)
+    arcsec_per_px = (180.0 * 3600.0) / (2.0 * radius)
+    diam_px = diam_arcsec / arcsec_per_px if arcsec_per_px > 0 else 0.0
+    disk_r  = max(diam_px / 2.0, 0.5)
+
+    uid = getattr(body, 'uid', '').upper()
+
+    # ── Saturno: ellisse anelli ───────────────────────────────────────────
+    if uid == "SATURN":
+        B_deg = getattr(body, 'ring_inclination_B', 0.0)
+        _paint_saturn_rings(field, px, py, disk_r, B_deg,
+                            body._distance_au, radius, photons * 0.7,
+                            (rc, gc, bc))
+
+    # ── Disco pianeta ─────────────────────────────────────────────────────
+    if uid in ("MERCURY", "VENUS") and phase_deg > 5.0:
+        # Fase visibile: usa maschera di fase
+        _paint_moon_disk(field, px, py, disk_r, phase_deg, photons, (rc, gc, bc))
+    elif disk_r >= 0.8:
+        # Disco risolvibile (Giove, Saturno, Marte vicino)
+        colour = (rc, gc, bc)
+        _paint_disk(field, px, py, disk_r, colour, photons)
+    else:
+        # Punto stellare (stelle deboli, oggetti minori, pianeti lontani)
+        H, W = field.shape[:2]
+        ix = int(round(px)); iy = int(round(py))
+        if 0 <= iy < H and 0 <= ix < W:
+            field[iy, ix, 0] += photons * rc
+            field[iy, ix, 1] += photons * gc
+            field[iy, ix, 2] += photons * bc
+        # Alone per pianeti brillanti (mag < 2)
+        if mag < 2.0:
+            glow_s = max(0.8, (2.0 - mag) * 0.6)
+            _paint_glow(field, px, py, glow_s, (rc, gc, bc), photons * 0.15)
+
+
+def _paint_saturn_rings(field, px, py, disk_r_px, B_deg,
+                         distance_au, render_radius, intensity, colour):
+    """
+    Disegna gli anelli di Saturno come ellisse.
+    B_deg: inclinazione (0=taglio, 26.7=massima apertura).
+    """
+    from universe.planet_physics import (SATURN_RING_OUTER_KM,
+                                          _KM_PER_AU, _ARCSEC_PER_RAD)
+    ring_au   = SATURN_RING_OUTER_KM / _KM_PER_AU
+    ring_arcsec = (ring_au / max(distance_au, 0.1)) * _ARCSEC_PER_RAD
+    arcsec_per_px = (180.0 * 3600.0) / (2.0 * render_radius)
+    ring_a = ring_arcsec / arcsec_per_px       # semiasse maggiore (px)
+    ring_b = ring_a * abs(math.sin(math.radians(B_deg)))  # semiasse minore
+
+    if ring_a < 0.5:
+        return
+
+    H, W = field.shape[:2]
+    pad = int(math.ceil(ring_a)) + 2
+    x0 = max(0, int(px)-pad); x1 = min(W, int(px)+pad+1)
+    y0 = max(0, int(py)-pad); y1 = min(H, int(py)+pad+1)
+    yy, xx = np.mgrid[y0:y1, x0:x1].astype(np.float32)
+
+    dx_ = (xx - px) / max(ring_a, 0.1)
+    dy_ = (yy - py) / max(ring_b, 0.1) if ring_b > 0.1 else np.zeros_like(dx_)
+    ell  = dx_**2 + dy_**2
+
+    # Anello: corona tra raggio interno (0.6×) e esterno (1.0×)
+    ring_mask = ((ell >= 0.35) & (ell <= 1.0)).astype(np.float32)
+    # Sfuma i bordi
+    ring_mask *= np.clip(1.0 - (ell - 0.35) / 0.05, 0, 1) + np.clip(1.0 - (1.0 - ell) / 0.05, 0, 1)
+    ring_mask = np.clip(ring_mask, 0, 1)
+
+    for c, col in enumerate(colour):
+        field[y0:y1, x0:x1, c] += ring_mask * intensity * 0.6 * col
+
+
+# ── Dispatcher aggiornato ─────────────────────────────────────────────────────
 
 def render_solar_bodies(field, solar_bodies, cx, cy, radius, exposure_s=1.0):
-    """Render all Sun/Moon bodies from a list of OrbitalBody objects."""
+    """
+    Render all Solar System bodies: Sun, Moon, planets, minor bodies.
+    solar_bodies: lista di OrbitalBody e/o MinorBody/CometBody.
+    """
     for body in solar_bodies:
         if body.is_sun:
             render_sun(field, body.altitude_deg, body.azimuth_deg,
@@ -243,3 +366,9 @@ def render_solar_bodies(field, solar_bodies, cx, cy, radius, exposure_s=1.0):
             render_moon(field, body.altitude_deg, body.azimuth_deg,
                         body.phase_fraction, body._phase_angle,
                         cx, cy, radius, exposure_s)
+        else:
+            # Pianeti e oggetti minori
+            try:
+                render_planet(field, body, cx, cy, radius, exposure_s)
+            except Exception:
+                pass   # Non bloccare il render per un singolo corpo

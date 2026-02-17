@@ -12,7 +12,7 @@ from typing import Optional, Tuple
 from imaging.sky_renderer import mag_to_flux, bv_to_rgb
 from imaging.celestial_bodies import (draw_sun, draw_moon,
                                        draw_atmospheric_glow)
-from imaging.solar_bodies_renderer import render_solar_bodies
+from imaging.solar_bodies_renderer import render_solar_bodies, render_planet
 from universe.orbital_body import equatorial_to_altaz
 
 
@@ -150,13 +150,16 @@ class AllSkyRenderer:
                atm_state         = None,
                sun_body          = None,
                moon_body         = None,
+               solar_bodies      = None,
                gain_sw:    int   = 200) -> np.ndarray:
         """
         Render the full allsky hemisphere.
 
         Parameters:
-          sun_body  : OrbitalBody with is_sun=True  (already update_position called)
-          moon_body : OrbitalBody with is_moon=True (already update_position called)
+          sun_body     : OrbitalBody with is_sun=True  (already update_position called)
+          moon_body    : OrbitalBody with is_moon=True (already update_position called)
+          solar_bodies : lista completa (Sole+Luna+pianeti+minori), usata per
+                         render_planet su tutti i corpi non-Sole non-Luna
         """
         S      = self.render_size
         cx = cy = S / 2.0
@@ -193,6 +196,18 @@ class AllSkyRenderer:
                       moon_body._alt_deg, moon_body._az_deg,
                       moon_body._phase_angle,
                       cx, cy, radius, S, gain_sw=gain_sw, exposure_s=exposure_s)
+
+        # ── Planets & minor bodies ───────────────────────────────────────
+        if solar_bodies is not None:
+            gm = _gain_mult(gain_sw)
+            for body in solar_bodies:
+                if body.is_sun or body.is_moon:
+                    continue
+                try:
+                    render_planet(field, body, cx, cy, radius,
+                                  exposure_s * gm)
+                except Exception:
+                    pass
 
         return field
 
