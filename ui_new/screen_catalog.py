@@ -413,11 +413,14 @@ class CatalogScreen(BaseScreen):
             
             # Check if it's an orbital body
             if isinstance(obj, OrbitalBody):
+                diam = (obj.apparent_diameter_arcsec() 
+                        if callable(obj.apparent_diameter_arcsec) 
+                        else obj.apparent_diameter_arcsec)
                 info = [
                     f"UID: {obj.uid}",
                     f"Distance: {obj.distance_au:.4f} AU",
                     f"Apparent mag: {obj.apparent_mag:+.2f}",
-                    f"Diameter: {obj.apparent_diameter_arcsec:.1f}\"",
+                    f"Diameter: {diam:.1f}\"",
                 ]
                 if obj.has_phases:
                     info.append(f"Phase: {int(obj.phase_fraction * 100)}%")
