@@ -417,7 +417,7 @@ class CatalogScreen(BaseScreen):
                     f"UID: {obj.uid}",
                     f"Distance: {obj.distance_au:.4f} AU",
                     f"Apparent mag: {obj.apparent_mag:+.2f}",
-                    f"Diameter: {obj.apparent_diameter_arcsec():.1f}\"",
+                    f"Diameter: {obj.apparent_diameter_arcsec:.1f}\"",
                 ]
                 if obj.has_phases:
                     info.append(f"Phase: {int(obj.phase_fraction * 100)}%")
