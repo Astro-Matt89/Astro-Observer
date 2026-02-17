@@ -446,10 +446,16 @@ class CatalogScreen(BaseScreen):
                 else:
                     type_str = "Solar System Object"
                 
+                # Build magnitude line with optional distance
+                if hasattr(obj, 'distance_ly'):
+                    mag_line = f"Mag: {obj.mag:.2f}  Dist: {obj.distance_ly:.0f} ly"
+                else:
+                    mag_line = f"Mag: {obj.mag:.2f}"
+                
                 info = [
                     f"UID: {obj.uid}",
                     f"Type: {type_str}",
-                    f"Mag: {obj.mag:.2f}  Dist: {obj.distance_ly:.0f} ly" if hasattr(obj, 'distance_ly') else f"Mag: {obj.mag:.2f}",
+                    mag_line,
                     f"RA: {obj.ra_deg:.2f}°  Dec: {obj.dec_deg:+.2f}°",
                 ]
                 

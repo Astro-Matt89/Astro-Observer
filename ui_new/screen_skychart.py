@@ -973,6 +973,7 @@ class SkychartScreen(BaseScreen):
                         else obj.apparent_diameter_arcsec)
                 show_diameter = True
             else:
+                diam = 0.0  # Not used, but initialized for safety
                 show_diameter = False
             
             if obj.is_sun:
