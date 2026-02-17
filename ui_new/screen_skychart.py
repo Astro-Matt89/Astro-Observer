@@ -412,9 +412,13 @@ class SkychartScreen(BaseScreen):
                 if px and self.proj.is_on_screen(*px):
                     fov_arcsec = self.proj.fov_deg * 3600.0
                     arcsec_per_px = fov_arcsec / min(self.proj.width, self.proj.height)
-                    diam_arcsec = (body.apparent_diameter_arcsec() 
-                                   if callable(body.apparent_diameter_arcsec) 
-                                   else body.apparent_diameter_arcsec)
+                    # Handle different body types: OrbitalBody (property), MinorBody (method), CometBody (no attr)
+                    if hasattr(body, 'apparent_diameter_arcsec'):
+                        diam_arcsec = (body.apparent_diameter_arcsec() 
+                                       if callable(body.apparent_diameter_arcsec) 
+                                       else body.apparent_diameter_arcsec)
+                    else:
+                        diam_arcsec = 1.0  # Point-like for comets (coma is diffuse, no fixed diameter)
                     diam_px = diam_arcsec / max(1.0, arcsec_per_px)
                     r_hit = max(8, int(diam_px / 2) + 4)
                     d = math.hypot(pos[0] - px[0], pos[1] - px[1])
@@ -816,9 +820,13 @@ class SkychartScreen(BaseScreen):
             fov_arcsec = self.proj.fov_deg * 3600.0
             px_per_screen = min(self.proj.width, self.proj.height)
             arcsec_per_px = fov_arcsec / px_per_screen
-            diam_arcsec = (body.apparent_diameter_arcsec() 
-                           if callable(body.apparent_diameter_arcsec) 
-                           else body.apparent_diameter_arcsec)
+            # Handle different body types: OrbitalBody (property), MinorBody (method), CometBody (no attr)
+            if hasattr(body, 'apparent_diameter_arcsec'):
+                diam_arcsec = (body.apparent_diameter_arcsec() 
+                               if callable(body.apparent_diameter_arcsec) 
+                               else body.apparent_diameter_arcsec)
+            else:
+                diam_arcsec = 1.0  # Point-like for comets (coma is diffuse, no fixed diameter)
             diam_px = diam_arcsec / max(1.0, arcsec_per_px)
             r = max(3, min(18, int(diam_px / 2)))
             
@@ -851,9 +859,13 @@ class SkychartScreen(BaseScreen):
             if px and self.proj.is_on_screen(*px):
                 fov_arcsec = self.proj.fov_deg * 3600.0
                 arcsec_per_px = fov_arcsec / min(self.proj.width, self.proj.height)
-                diam_arcsec = (body.apparent_diameter_arcsec() 
-                               if callable(body.apparent_diameter_arcsec) 
-                               else body.apparent_diameter_arcsec)
+                # Handle different body types (defensive check even for Moon)
+                if hasattr(body, 'apparent_diameter_arcsec'):
+                    diam_arcsec = (body.apparent_diameter_arcsec() 
+                                   if callable(body.apparent_diameter_arcsec) 
+                                   else body.apparent_diameter_arcsec)
+                else:
+                    diam_arcsec = 1800.0  # Default for Moon (shouldn't happen but safe)
                 r = max(5, min(30, int(diam_arcsec / max(1.0, arcsec_per_px) / 2)))
                 
                 pygame.draw.circle(surface, (200, 200, 200), px, r)
@@ -882,9 +894,13 @@ class SkychartScreen(BaseScreen):
             if px and self.proj.is_on_screen(*px):
                 fov_arcsec = self.proj.fov_deg * 3600.0
                 arcsec_per_px = fov_arcsec / min(self.proj.width, self.proj.height)
-                diam_arcsec = (body.apparent_diameter_arcsec() 
-                               if callable(body.apparent_diameter_arcsec) 
-                               else body.apparent_diameter_arcsec)
+                # Handle different body types (defensive check even for Sun)
+                if hasattr(body, 'apparent_diameter_arcsec'):
+                    diam_arcsec = (body.apparent_diameter_arcsec() 
+                                   if callable(body.apparent_diameter_arcsec) 
+                                   else body.apparent_diameter_arcsec)
+                else:
+                    diam_arcsec = 1920.0  # Default for Sun (shouldn't happen but safe)
                 r = max(6, min(35, int(diam_arcsec / max(1.0, arcsec_per_px) / 2)))
                 
                 # 3-layer glow
@@ -950,9 +966,13 @@ class SkychartScreen(BaseScreen):
         if isinstance(obj, OrbitalBody):
             surface.blit(fn.render(obj.name, True, (0, 255, 120)), (px+8, fy)); fy += 22
             
-            diam = (obj.apparent_diameter_arcsec() 
-                    if callable(obj.apparent_diameter_arcsec) 
-                    else obj.apparent_diameter_arcsec)
+            # Handle different body types: OrbitalBody (property), MinorBody (method), CometBody (no attr)
+            if hasattr(obj, 'apparent_diameter_arcsec'):
+                diam = (obj.apparent_diameter_arcsec() 
+                        if callable(obj.apparent_diameter_arcsec) 
+                        else obj.apparent_diameter_arcsec)
+            else:
+                diam = 0.0  # Shouldn't happen for OrbitalBody
             
             if obj.is_sun:
                 row(f"The Sun — G2V star")
@@ -976,6 +996,42 @@ class SkychartScreen(BaseScreen):
                     row(f"Ring tilt B: {B:+.1f}°")
             
             row(obj.radec_str(), (125, 190, 125))
+            alt, az = radec_to_altaz(obj.ra_deg, obj.dec_deg, self.lst_deg, self.observer.latitude_deg)
+            vc = (0,255,0) if alt > 20 else (255,200,0) if alt > 0 else (200,80,80)
+            vis = "above horizon" if alt > 0 else "below horizon"
+            row(f"Alt {alt:+.1f}°  Az {az:.1f}°  — {vis}", vc)
+            return
+
+        # Handle minor bodies (asteroids and comets)
+        from universe.minor_bodies import MinorBody, CometBody
+        if isinstance(obj, (MinorBody, CometBody)):
+            surface.blit(fn.render(obj.name, True, (0, 255, 120)), (px+8, fy)); fy += 22
+            
+            if isinstance(obj, CometBody):
+                row(f"Comet  mag {obj.apparent_mag:+.2f}")
+            else:
+                row(f"Asteroid  mag {obj.apparent_mag:+.2f}")
+            
+            row(f"Distance: {obj.distance_au:.3f} AU")
+            
+            # Show diameter only if it exists (not for comets)
+            if hasattr(obj, 'apparent_diameter_arcsec'):
+                diam = (obj.apparent_diameter_arcsec() 
+                        if callable(obj.apparent_diameter_arcsec) 
+                        else obj.apparent_diameter_arcsec)
+                if diam > 0.1:  # Only show if > 0.1" (meaningful)
+                    row(f"Diameter: {diam:.2f}\"")
+            
+            # Format RA/Dec manually (MinorBody doesn't have radec_str())
+            ra_h = int(obj.ra_deg / 15)
+            ra_m = int((obj.ra_deg / 15 - ra_h) * 60)
+            ra_s = int(((obj.ra_deg / 15 - ra_h) * 60 - ra_m) * 60)
+            sign = "+" if obj.dec_deg >= 0 else "-"
+            dd = int(abs(obj.dec_deg))
+            dm = int((abs(obj.dec_deg) - dd) * 60)
+            radec_text = f"RA {ra_h:02d}h{ra_m:02d}m{ra_s:02d}s  Dec {sign}{dd:02d}°{dm:02d}'"
+            row(radec_text, (125, 190, 125))
+            
             alt, az = radec_to_altaz(obj.ra_deg, obj.dec_deg, self.lst_deg, self.observer.latitude_deg)
             vc = (0,255,0) if alt > 20 else (255,200,0) if alt > 0 else (200,80,80)
             vis = "above horizon" if alt > 0 else "below horizon"
