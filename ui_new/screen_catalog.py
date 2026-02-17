@@ -13,6 +13,14 @@ from typing import Optional, List
 from .base_screen import BaseScreen
 from .components import Button, ScrollableList, TextInput, Checkbox
 from universe.space_object import SpaceObject, ObjectClass
+from universe.orbital_body import build_solar_system, OrbitalBody
+from universe.minor_bodies import build_minor_bodies, MinorBody, CometBody
+from universe.planet_physics import saturn_ring_inclination_B
+from core.time_controller import TimeController
+from core.celestial_math import PARMA_OBSERVER, radec_to_altaz
+
+# Constants
+AU_TO_KM = 149597870.7  # 1 AU in kilometers (IAU standard)
 
 
 class CatalogScreen(BaseScreen):
@@ -60,6 +68,17 @@ class CatalogScreen(BaseScreen):
             'cat_gaia': Button(500, 385, 70, 28, "GAIA", callback=lambda: self.set_catalog("Gaia DR3")),
         }
         
+        # Solar system bodies
+        self._solar_bodies = build_solar_system()
+        self._sun = next((b for b in self._solar_bodies if b.is_sun), None)
+        self._moon = next((b for b in self._solar_bodies if b.is_moon), None)
+        self._planets = [b for b in self._solar_bodies if not b.is_sun and not b.is_moon]
+        self._minor_bodies = build_minor_bodies()
+        self._observer = PARMA_OBSERVER
+        self._tc = TimeController()
+        self.show_solar_system = True
+        self._solar_panel_rows = []  # for click detection
+        
         self.update_filtered_list()
     
     def set_catalog(self, cat: str):
@@ -102,15 +121,16 @@ class CatalogScreen(BaseScreen):
             if obj.mag > self.mag_limit:
                 continue
             
-            # Type filter
-            if obj.obj_class == ObjectClass.STAR and not self.filters['stars'].is_checked():
-                continue
-            if obj.obj_class == ObjectClass.GALAXY and not self.filters['galaxies'].is_checked():
-                continue
-            if obj.obj_class == ObjectClass.NEBULA and not self.filters['nebulae'].is_checked():
-                continue
-            if obj.obj_class == ObjectClass.CLUSTER and not self.filters['clusters'].is_checked():
-                continue
+            # Type filter (only for SpaceObject with obj_class attribute)
+            if hasattr(obj, 'obj_class'):
+                if obj.obj_class == ObjectClass.STAR and not self.filters['stars'].is_checked():
+                    continue
+                if obj.obj_class == ObjectClass.GALAXY and not self.filters['galaxies'].is_checked():
+                    continue
+                if obj.obj_class == ObjectClass.NEBULA and not self.filters['nebulae'].is_checked():
+                    continue
+                if obj.obj_class == ObjectClass.CLUSTER and not self.filters['clusters'].is_checked():
+                    continue
             
             # Catalog filter
             if self.catalog_filter != "ALL":
@@ -165,16 +185,32 @@ class CatalogScreen(BaseScreen):
         self.set_as_target()
         self._next_screen = "IMAGING"
     
+    def _update_solar_positions(self):
+        """Refresh RA/Dec and ephemeris for all solar system bodies."""
+        jd = self._tc.jd
+        lat = self._observer.latitude_deg
+        lon = self._observer.longitude_deg
+        if self._sun:
+            self._sun.update_position(jd, lat, lon)
+        if self._moon:
+            self._moon.update_position(jd, lat, lon)
+        for body in self._planets:
+            body.update_position(jd, lat, lon)
+        for body in self._minor_bodies:
+            body.update_position(jd, lat, lon)
+    
     def on_enter(self):
         super().on_enter()
         self._next_screen = None
         self.update_filtered_list()
+        self._update_solar_positions()
     
     def on_exit(self):
         super().on_exit()
     
     def update(self, dt: float):
-        pass
+        self._tc.step(dt)
+        self._update_solar_positions()
     
     def handle_input(self, events) -> Optional[str]:
         mp = pygame.mouse.get_pos()
@@ -213,16 +249,130 @@ class CatalogScreen(BaseScreen):
             
             # List click selection
             if event.type == pygame.MOUSEBUTTONDOWN:
-                if self.object_list.handle_event(event):
-                    idx = self.object_list.selected_index
-                    if 0 <= idx < len(self.filtered_objects):
-                        self.selected_object = self.filtered_objects[idx]
+                # Check solar panel rows first
+                for rect, body in getattr(self, '_solar_panel_rows', []):
+                    if rect.collidepoint(event.pos):
+                        self.selected_object = body
+                        break
+                else:
+                    # If no solar panel click, check object list
+                    if self.object_list.handle_event(event):
+                        idx = self.object_list.selected_index
+                        if 0 <= idx < len(self.filtered_objects):
+                            self.selected_object = self.filtered_objects[idx]
             
             # ESC → back
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 return "OBSERVATORY"
         
         return None
+    
+    def _draw_solar_system_panel(self, surface: pygame.Surface, x: int, y: int):
+        """
+        Draw Solar System section of catalog.
+        Shows: name, symbol, magnitude, distance, phase/B angle, altitude indicator.
+        """
+        W_panel = 340
+        font_h = pygame.font.SysFont('monospace', 12, bold=True)
+        font = pygame.font.SysFont('monospace', 11)
+        
+        # Background
+        bg = pygame.Surface((W_panel, 400), pygame.SRCALPHA)
+        bg.fill((0, 18, 10, 200))
+        pygame.draw.rect(bg, (0, 100, 50), (0, 0, W_panel, 400), 1)
+        surface.blit(bg, (x, y))
+        
+        fy = y + 8
+        surface.blit(font_h.render("SOLAR SYSTEM", True, (0, 220, 100)), (x + 8, fy))
+        fy += 20
+        pygame.draw.line(surface, (0, 80, 40), (x + 4, fy), (x + W_panel - 4, fy), 1)
+        fy += 6
+        
+        SYMBOLS = {
+            "SUN": "☉", "MOON": "☽", "MERCURY": "☿", "VENUS": "♀",
+            "MARS": "♂", "JUPITER": "♃", "SATURN": "♄",
+            "URANUS": "⛢", "NEPTUNE": "♆", "PLUTO": "♇",
+        }
+        COLORS = {
+            "SUN": (255, 255, 180), "MOON": (200, 200, 200),
+            "MERCURY": (180, 160, 140), "VENUS": (220, 210, 160),
+            "MARS": (210, 100, 60), "JUPITER": (200, 170, 130),
+            "SATURN": (210, 190, 140), "URANUS": (150, 210, 220),
+            "NEPTUNE": (100, 130, 220), "PLUTO": (150, 140, 130),
+        }
+        
+        jd = self._tc.jd
+        self._solar_panel_rows.clear()
+        
+        bodies_ordered = [self._sun, self._moon] + self._planets
+        
+        for body in bodies_ordered:
+            sym = SYMBOLS.get(body.uid, "●")
+            color = COLORS.get(body.uid, (180, 180, 180))
+            mag = body.apparent_mag
+            dist = body.distance_au
+            
+            extra = ""
+            if body.is_moon or body.has_phases:
+                extra = f"{int(body.phase_fraction * 100):3d}%"
+            elif body.uid == "SATURN":
+                B = saturn_ring_inclination_B(jd)
+                extra = f"B={B:+.0f}°"
+            
+            if body.is_moon:
+                dist_str = f"{body.distance_au * AU_TO_KM:.0f} km"
+            elif body.is_sun:
+                dist_str = "1.000 AU "
+            else:
+                dist_str = f"{dist:6.3f} AU"
+            
+            alt, az = radec_to_altaz(body.ra_deg, body.dec_deg,
+                                      self._tc.lst(self._observer.longitude_deg),
+                                      self._observer.latitude_deg)
+            vis_col = (0, 200, 80) if alt > 0 else (120, 80, 80)
+            vis_sym = "↑" if alt > 0 else "↓"
+            
+            line = f"{sym} {body.name:<10}  {mag:+6.1f}  {dist_str}  {extra}"
+            txt = font.render(line, True, color)
+            surface.blit(txt, (x + 8, fy))
+            
+            vis_txt = font.render(f"{vis_sym}{alt:+.0f}°", True, vis_col)
+            surface.blit(vis_txt, (x + W_panel - 65, fy))
+            
+            if (self.selected_object and
+                    hasattr(self.selected_object, 'uid') and
+                    self.selected_object.uid == body.uid):
+                pygame.draw.rect(surface, (0, 180, 70), (x + 4, fy - 1, W_panel - 8, 15), 1)
+            
+            # Store for click detection
+            row_rect = pygame.Rect(x + 4, fy - 1, W_panel - 8, 15)
+            self._solar_panel_rows.append((row_rect, body))
+            fy += 16
+        
+        # Minor bodies
+        fy += 4
+        pygame.draw.line(surface, (0, 60, 30), (x + 4, fy), (x + W_panel - 4, fy), 1)
+        fy += 6
+        surface.blit(font.render("Minor Bodies", True, (0, 140, 60)), (x + 8, fy))
+        fy += 16
+        
+        for body in self._minor_bodies:
+            mag = body.apparent_mag
+            dist = body.distance_au
+            alt, az = radec_to_altaz(body.ra_deg, body.dec_deg,
+                                      self._tc.lst(self._observer.longitude_deg),
+                                      self._observer.latitude_deg)
+            vis_col = (0, 180, 70) if alt > 0 else (100, 70, 70)
+            vis_sym = "↑" if alt > 0 else "↓"
+            
+            line = f"● {body.name:<12}  {mag:+5.1f}  {dist:5.3f} AU"
+            surface.blit(font.render(line, True, (160, 155, 140)), (x + 8, fy))
+            vis_txt = font.render(f"{vis_sym}{alt:+.0f}°", True, vis_col)
+            surface.blit(vis_txt, (x + W_panel - 65, fy))
+            
+            row_rect = pygame.Rect(x + 4, fy - 1, W_panel - 8, 15)
+            self._solar_panel_rows.append((row_rect, body))
+            fy += 15
     
     def render(self, surface: pygame.Surface):
         W, H = surface.get_width(), surface.get_height()
@@ -250,6 +400,9 @@ class CatalogScreen(BaseScreen):
         # Object list
         self.object_list.draw(surface)
         
+        # Solar system panel
+        self._draw_solar_system_panel(surface, x=820, y=140)
+        
         # Selected object info
         if self.selected_object:
             obj = self.selected_object
@@ -259,18 +412,66 @@ class CatalogScreen(BaseScreen):
             font_b = pygame.font.SysFont('monospace', 13, bold=True)
             surface.blit(font_b.render(obj.name[:30], True, (0, 220, 100)), (510, y+10))
             
-            info = [
-                f"UID: {obj.uid}",
-                f"Type: {obj.obj_class.value.title()}",
-                f"Mag: {obj.mag:.2f}  Dist: {obj.distance_ly:.0f} ly",
-                f"RA: {obj.ra_deg:.2f}°  Dec: {obj.dec_deg:+.2f}°",
-            ]
-            
-            # Show cross-refs if available
-            if "cross_ref" in obj.meta:
-                xref = obj.meta["cross_ref"]
-                xref_str = "  ".join([f"{k}:{v}" for k, v in list(xref.items())[:3]])
-                info.append(f"IDs: {xref_str[:40]}")
+            # Check if it's an orbital body
+            if isinstance(obj, OrbitalBody):
+                # Handle different body types: OrbitalBody (property), MinorBody (method), CometBody (no attr)
+                if hasattr(obj, 'apparent_diameter_arcsec'):
+                    diam = (obj.apparent_diameter_arcsec() 
+                            if callable(obj.apparent_diameter_arcsec) 
+                            else obj.apparent_diameter_arcsec)
+                else:
+                    diam = 0.0  # Shouldn't happen for OrbitalBody
+                info = [
+                    f"UID: {obj.uid}",
+                    f"Distance: {obj.distance_au:.4f} AU",
+                    f"Apparent mag: {obj.apparent_mag:+.2f}",
+                ]
+                if diam > 0.1:  # Only show meaningful diameters
+                    info.append(f"Diameter: {diam:.1f}\"")
+                if obj.has_phases:
+                    info.append(f"Phase: {int(obj.phase_fraction * 100)}%")
+                if obj.uid == "SATURN":
+                    B = saturn_ring_inclination_B(self._tc.jd)
+                    info.append(f"Ring tilt B: {B:+.1f}°")
+            else:
+                # Handle MinorBody, CometBody, and SpaceObject
+                # Determine type string with fallback for solar system bodies
+                if hasattr(obj, 'obj_class'):
+                    # SpaceObject (stars, DSO) with Enum type
+                    type_str = obj.obj_class.value.title()
+                elif isinstance(obj, CometBody):
+                    type_str = "Comet"
+                elif isinstance(obj, MinorBody):
+                    type_str = "Asteroid"
+                else:
+                    type_str = "Solar System Object"
+                
+                # Build magnitude line with optional distance
+                if hasattr(obj, 'distance_ly'):
+                    mag_line = f"Mag: {obj.mag:.2f}  Dist: {obj.distance_ly:.0f} ly"
+                else:
+                    mag_line = f"Mag: {obj.mag:.2f}"
+                
+                info = [
+                    f"UID: {obj.uid}",
+                    f"Type: {type_str}",
+                    mag_line,
+                    f"RA: {obj.ra_deg:.2f}°  Dec: {obj.dec_deg:+.2f}°",
+                ]
+                
+                # Handle apparent_diameter_arcsec for MinorBody (method) and CometBody (no attr)
+                if hasattr(obj, 'apparent_diameter_arcsec'):
+                    diam = (obj.apparent_diameter_arcsec() 
+                            if callable(obj.apparent_diameter_arcsec) 
+                            else obj.apparent_diameter_arcsec)
+                    if diam > 0.1:  # Only show meaningful diameters
+                        info.append(f"Diameter: {diam:.1f}\"")
+                
+                # Show cross-refs if available (only for SpaceObject)
+                if hasattr(obj, 'meta') and "cross_ref" in obj.meta:
+                    xref = obj.meta["cross_ref"]
+                    xref_str = "  ".join([f"{k}:{v}" for k, v in list(xref.items())[:3]])
+                    info.append(f"IDs: {xref_str[:40]}")
             
             for i, line in enumerate(info):
                 surface.blit(font_sm.render(line, True, (0, 180, 80)), (510, y+30+i*14))

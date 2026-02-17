@@ -4,7 +4,7 @@ Un simulatore astronomico fotorealistico in stile retrò (DOS/VGA) con fisica re
 
 ![Python](https://img.shields.io/badge/python-3.11+-green)
 ![Lines](https://img.shields.io/badge/codebase-~20k_lines-blue)
-![Status](https://img.shields.io/badge/status-sprint_13a-orange)
+![Status](https://img.shields.io/badge/status-sprint_13b-brightgreen)
 
 ---
 
@@ -84,7 +84,7 @@ main_app.py                  # Entry point, game loop, screen router
 
 ---
 
-## Implementato — Stato Attuale (Sprint 13a, Feb 2026)
+## Implementato — Stato Attuale (Sprint 13b, Feb 2026)
 
 ### Universo 3D
 
@@ -155,6 +155,13 @@ Per ciascuno:
 - Costellazioni: 33 pattern con linee, visibilità adattiva per mag limit
 - Griglia RA/Dec, reticolo, info stelle al click
 - TimeController condiviso con ImagingScreen: JD floating-point, 8 velocità (pausa → 1 settimana/s), reverse, sync real-time
+- **[NEW Sprint 13b]** Pianeti visibili con dimensioni FOV-aware, colori realistici per tipo (Marte rosso, Giove tan, ecc.)
+- **[NEW Sprint 13b]** Saturno con anelli ellittici dinamici, inclinazione B calcolata dal ciclo 29.5 anni
+- **[NEW Sprint 13b]** Luna con shading fase tramite terminatore alpha-blended
+- **[NEW Sprint 13b]** Sole con bloom a 3 layer (r×3, r×2, r) con alpha graduato
+- **[NEW Sprint 13b]** Minor bodies (Cerere, Vesta, asteroidi, comete) visibili come punti stellari filtrati per magnitudine
+- **[NEW Sprint 13b]** Click selection per tutti i corpi con hitbox adattivo, info panel con effemeridi real-time
+- **[NEW Sprint 13b]** Toggle [P] e pulsante PLANETS per mostrare/nascondere sistema solare
 
 ### Imaging Screen (3 tab)
 
@@ -181,20 +188,25 @@ Per ciascuno:
 - Career Mode: struttura task e obiettivi, progressione equipaggiamento, sistema punti ricerca
 - Equipment Manager: database telescopi, camere, montature; calcolatore FOV e scala pixel
 - Catalog Browser: ricerca per nome/tipo/magnitudine/costellazione, preview DSO
+- **[NEW Sprint 13b]** Catalog Browser: pannello "Solar System" (340×400px) con lista completa pianeti + minor bodies
+- **[NEW Sprint 13b]** Effemeridi aggiornate real-time: simbolo Unicode, nome, magnitudine, distanza, fase%/angolo B Saturno
+- **[NEW Sprint 13b]** Indicatori altitudine: ↑ verde sopra orizzonte, ↓ rosso sotto orizzonte
+- **[NEW Sprint 13b]** Sezione Minor Bodies separata nel catalogo
+- **[NEW Sprint 13b]** Click su riga → info panel con campi tipo-specifici (pianeta/asteroide/cometa)
 
 ---
 
 ## Da Implementare — Backlog Ordinato
 
-### Sprint 13b — Integrazione Sky Chart + Pianeti (prossimo)
+### Sprint 13b — Integrazione Sky Chart + Pianeti ✅ COMPLETATO
 
-- [ ] Pianeti visibili nello sky chart con simboli e label (attualmente assenti)
-- [ ] Oggetti minori nello sky chart (Cerere, Vesta visibili a occhio nudo)
-- [ ] Tooltip pianeta al click: magnitudine, distanza, fase, diametro apparente
-- [ ] Saturno con indicazione inclinazione anelli nel tooltip
-- [ ] Pianeti nel Catalog Browser (sezione Solar System)
-- [ ] Etichette automatiche congiunzioni/opposizioni vicine nel timeframe corrente
-- [ ] Coerenza visiva sky chart ↔ allsky: stesso oggetto, stesso simbolo/colore
+- [x] Pianeti visibili nello sky chart con simboli e label
+- [x] Oggetti minori nello sky chart (Cerere, Vesta visibili a occhio nudo)
+- [x] Tooltip pianeta al click: magnitudine, distanza, fase, diametro apparente
+- [x] Saturno con indicazione inclinazione anelli nel tooltip
+- [x] Pianeti nel Catalog Browser (sezione Solar System)
+- [x] Coerenza visiva sky chart ↔ allsky: stesso oggetto, stesso simbolo/colore
+- [ ] Etichette automatiche congiunzioni/opposizioni vicine nel timeframe corrente (rimandato a Sprint 14)
 
 ### Sprint 14 — Seeing e Meteo
 
@@ -289,10 +301,11 @@ Per ciascuno:
 | Space | Pausa/Riprendi tempo |
 | F1–F6 | Velocità tempo (×0, ×1, ×10, ×60, ×3600, ×86400) |
 | R | Reverse tempo |
-| \\ | Sync tempo reale |
+| \ | Sync tempo reale |
 | Mouse drag | Pan sky chart |
 | Scroll | Zoom sky chart |
 | Click | Seleziona/info oggetto |
+| P | Toggle pianeti sky chart |
 
 ---
 
@@ -320,6 +333,6 @@ Il mapping è luma-chroma preserving: applica log stretch sulla luminanza, prese
 
 ---
 
-*Sprint 13a completato: sistema solare completo, oggetti minori, fisica IAU 2012*
+*Sprint 13b completato: integrazione pianeti in sky chart e catalog browser*
 *Codebase: ~20.000 righe Python (esclusi backup e file obsoleti)*
 *Ultima modifica: Febbraio 2026*
