@@ -412,7 +412,7 @@ class SkychartScreen(BaseScreen):
                 if px and self.proj.is_on_screen(*px):
                     fov_arcsec = self.proj.fov_deg * 3600.0
                     arcsec_per_px = fov_arcsec / min(self.proj.width, self.proj.height)
-                    diam_px = body.apparent_diameter_arcsec() / max(1.0, arcsec_per_px)
+                    diam_px = body.apparent_diameter_arcsec / max(1.0, arcsec_per_px)
                     r_hit = max(8, int(diam_px / 2) + 4)
                     d = math.hypot(pos[0] - px[0], pos[1] - px[1])
                     if d < r_hit and d < best_dist:
@@ -813,7 +813,7 @@ class SkychartScreen(BaseScreen):
             fov_arcsec = self.proj.fov_deg * 3600.0
             px_per_screen = min(self.proj.width, self.proj.height)
             arcsec_per_px = fov_arcsec / px_per_screen
-            diam_px = body.apparent_diameter_arcsec() / max(1.0, arcsec_per_px)
+            diam_px = body.apparent_diameter_arcsec / max(1.0, arcsec_per_px)
             r = max(3, min(18, int(diam_px / 2)))
             
             pygame.draw.circle(surface, color, px, r)
@@ -845,7 +845,7 @@ class SkychartScreen(BaseScreen):
             if px and self.proj.is_on_screen(*px):
                 fov_arcsec = self.proj.fov_deg * 3600.0
                 arcsec_per_px = fov_arcsec / min(self.proj.width, self.proj.height)
-                r = max(5, min(30, int(body.apparent_diameter_arcsec() / max(1.0, arcsec_per_px) / 2)))
+                r = max(5, min(30, int(body.apparent_diameter_arcsec / max(1.0, arcsec_per_px) / 2)))
                 
                 pygame.draw.circle(surface, (200, 200, 200), px, r)
                 
@@ -873,7 +873,7 @@ class SkychartScreen(BaseScreen):
             if px and self.proj.is_on_screen(*px):
                 fov_arcsec = self.proj.fov_deg * 3600.0
                 arcsec_per_px = fov_arcsec / min(self.proj.width, self.proj.height)
-                r = max(6, min(35, int(body.apparent_diameter_arcsec() / max(1.0, arcsec_per_px) / 2)))
+                r = max(6, min(35, int(body.apparent_diameter_arcsec / max(1.0, arcsec_per_px) / 2)))
                 
                 # 3-layer glow
                 for glow_r, glow_alpha in [(r * 3, 30), (r * 2, 60), (r, 255)]:
@@ -942,17 +942,17 @@ class SkychartScreen(BaseScreen):
                 row(f"The Sun — G2V star")
                 row(f"Mag: {obj.apparent_mag:+.2f}")
                 row(f"Distance: 1.000 AU")
-                row(f"Diameter: {obj.apparent_diameter_arcsec():.0f}\"")
+                row(f"Diameter: {obj.apparent_diameter_arcsec:.0f}\"")
             elif obj.is_moon:
                 row(f"Earth's Moon")
                 row(f"Mag: {obj.apparent_mag:+.2f}")
                 row(f"Distance: {obj.distance_au * AU_TO_KM:.0f} km")
                 row(f"Phase: {int(obj.phase_fraction * 100)}%")
-                row(f"Diameter: {obj.apparent_diameter_arcsec():.0f}\"")
+                row(f"Diameter: {obj.apparent_diameter_arcsec:.0f}\"")
             else:
                 row(f"Planet  mag {obj.apparent_mag:+.2f}")
                 row(f"Distance: {obj.distance_au:.3f} AU")
-                row(f"Diameter: {obj.apparent_diameter_arcsec():.1f}\"")
+                row(f"Diameter: {obj.apparent_diameter_arcsec:.1f}\"")
                 if obj.has_phases:
                     row(f"Phase: {int(obj.phase_fraction * 100)}%")
                 if obj.uid == "SATURN":
