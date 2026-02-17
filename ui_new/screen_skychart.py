@@ -63,6 +63,9 @@ def _get_const_lines():
         _CONSTELLATION_LINES_CACHE = get_constellation_lines()
     return _CONSTELLATION_LINES_CACHE
 
+# Constants
+AU_TO_KM = 149597870  # 1 AU in kilometers
+
 # DSO colours
 _DSO_COLORS = {
     ObjectSubtype.EMISSION:          (220, 80,  80),
@@ -146,8 +149,8 @@ class SkychartScreen(BaseScreen):
 
         # Solar system bodies
         self._solar_bodies = build_solar_system()
-        self._sun = next(b for b in self._solar_bodies if b.is_sun)
-        self._moon = next(b for b in self._solar_bodies if b.is_moon)
+        self._sun = next((b for b in self._solar_bodies if b.is_sun), None)
+        self._moon = next((b for b in self._solar_bodies if b.is_moon), None)
         self._planets = [b for b in self._solar_bodies if not b.is_sun and not b.is_moon]
         self._minor_bodies = build_minor_bodies()
         self.show_planets = True  # toggle for planets visibility
@@ -454,8 +457,10 @@ class SkychartScreen(BaseScreen):
         jd = self._tc.jd
         lat = self.observer.latitude_deg
         lon = self.observer.longitude_deg
-        self._sun.update_position(jd, lat, lon)
-        self._moon.update_position(jd, lat, lon)
+        if self._sun:
+            self._sun.update_position(jd, lat, lon)
+        if self._moon:
+            self._moon.update_position(jd, lat, lon)
         for body in self._planets:
             body.update_position(jd, lat, lon)
         for body in self._minor_bodies:
@@ -941,7 +946,7 @@ class SkychartScreen(BaseScreen):
             elif obj.is_moon:
                 row(f"Earth's Moon")
                 row(f"Mag: {obj.apparent_mag:+.2f}")
-                row(f"Distance: {obj.distance_au * 149597870:.0f} km")
+                row(f"Distance: {obj.distance_au * AU_TO_KM:.0f} km")
                 row(f"Phase: {int(obj.phase_fraction * 100)}%")
                 row(f"Diameter: {obj.apparent_diameter_arcsec():.0f}\"")
             else:

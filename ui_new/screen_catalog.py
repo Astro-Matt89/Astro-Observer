@@ -19,6 +19,9 @@ from universe.planet_physics import saturn_ring_inclination_B
 from core.time_controller import TimeController
 from core.celestial_math import PARMA_OBSERVER, radec_to_altaz
 
+# Constants
+AU_TO_KM = 149597870  # 1 AU in kilometers
+
 
 class CatalogScreen(BaseScreen):
     """Catalog Browser - Explore all Universe objects"""
@@ -67,8 +70,8 @@ class CatalogScreen(BaseScreen):
         
         # Solar system bodies
         self._solar_bodies = build_solar_system()
-        self._sun = next(b for b in self._solar_bodies if b.is_sun)
-        self._moon = next(b for b in self._solar_bodies if b.is_moon)
+        self._sun = next((b for b in self._solar_bodies if b.is_sun), None)
+        self._moon = next((b for b in self._solar_bodies if b.is_moon), None)
         self._planets = [b for b in self._solar_bodies if not b.is_sun and not b.is_moon]
         self._minor_bodies = build_minor_bodies()
         self._observer = PARMA_OBSERVER
@@ -186,8 +189,10 @@ class CatalogScreen(BaseScreen):
         jd = self._tc.jd
         lat = self._observer.latitude_deg
         lon = self._observer.longitude_deg
-        self._sun.update_position(jd, lat, lon)
-        self._moon.update_position(jd, lat, lon)
+        if self._sun:
+            self._sun.update_position(jd, lat, lon)
+        if self._moon:
+            self._moon.update_position(jd, lat, lon)
         for body in self._planets:
             body.update_position(jd, lat, lon)
         for body in self._minor_bodies:
@@ -314,7 +319,7 @@ class CatalogScreen(BaseScreen):
                 extra = f"B={B:+.0f}°"
             
             if body.is_moon:
-                dist_str = f"{body.distance_au * 149597870:.0f} km"
+                dist_str = f"{body.distance_au * AU_TO_KM:.0f} km"
             elif body.is_sun:
                 dist_str = "1.000 AU "
             else:
