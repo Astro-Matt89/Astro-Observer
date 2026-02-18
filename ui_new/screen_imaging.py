@@ -883,6 +883,9 @@ class ImagingScreen(BaseScreen):
             y=_txt(surface,6,y,f"External      {ext_t:.1f} °C",(0,180,160),10)
             see=self._atm_state.seeing_fwhm_arcsec
             y=_txt(surface,6,y,f"Seeing        {see:.1f}\"",_C,10)
+            # Add transparency display
+            transparency = getattr(self._atm_state, 'transparency', 1.0)
+            y=_txt(surface,6,y,f"Transparency  {transparency*100:.0f}%",_C,10)
 
         y+=4; y=_sec(surface,6,y,"SENSOR GAIN")
         gv=self.GAIN_STEPS[self.gain_idx]

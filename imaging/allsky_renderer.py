@@ -75,21 +75,24 @@ def build_allsky_background(size: int, atm_state, exposure_s: float = 1.0,
     r_norm = np.clip(r_px / radius, 0.0, 1.0)
     inside = (r_px <= radius).astype(np.float32)
 
+    # Get transparency from atmospheric state
+    transparency = getattr(atm_state, 'transparency', 1.0)
+
     if atm_state is not None:
         solar_alt  = atm_state.solar_alt_deg
         solar_az_r = math.radians(float(getattr(atm_state, 'solar_az_deg', 180.0)))
         scale = _sky_scale(solar_alt)
         gm = _gain_mult(gain_sw)
-        bg_r = atm_state.sky_bg_r * exposure_s * scale * gm
-        bg_g = atm_state.sky_bg_g * exposure_s * scale * gm
-        bg_b = atm_state.sky_bg_b * exposure_s * scale * gm
+        bg_r = atm_state.sky_bg_r * exposure_s * scale * gm * transparency
+        bg_g = atm_state.sky_bg_g * exposure_s * scale * gm * transparency
+        bg_b = atm_state.sky_bg_b * exposure_s * scale * gm * transparency
     else:
         solar_alt  = -30.0
         solar_az_r = math.pi
         gm = _gain_mult(gain_sw)
-        bg_r = 0.10 * exposure_s * gm
-        bg_g = 0.20 * exposure_s * gm
-        bg_b = 0.60 * exposure_s * gm
+        bg_r = 0.10 * exposure_s * gm * transparency
+        bg_g = 0.20 * exposure_s * gm * transparency
+        bg_b = 0.60 * exposure_s * gm * transparency
 
     # Airmass gradient
     horizon_boost = 1.20 if solar_alt < -12.0 else (1.45 if solar_alt < 0.0 else 1.8)
@@ -183,19 +186,23 @@ class AllSkyRenderer:
                                gain_sw=gain_sw)
 
         # ── Solar disk ──────────────────────────────────────────────────
+        transparency = getattr(atm_state, 'transparency', 1.0)
         if sun_body is not None:
             draw_sun(field, sun_body._alt_deg, sun_body._az_deg,
-                     cx, cy, radius, S, gain_sw=gain_sw, exposure_s=exposure_s)
+                     cx, cy, radius, S, gain_sw=gain_sw, exposure_s=exposure_s,
+                     transparency=transparency)
         elif solar_alt > -2.0:
             draw_sun(field, solar_alt, solar_az, cx, cy, radius, S,
-                     gain_sw=gain_sw, exposure_s=exposure_s)
+                     gain_sw=gain_sw, exposure_s=exposure_s,
+                     transparency=transparency)
 
         # ── Lunar disk ──────────────────────────────────────────────────
         if moon_body is not None and moon_body._alt_deg > 0.5:
             draw_moon(field,
                       moon_body._alt_deg, moon_body._az_deg,
                       moon_body._phase_angle,
-                      cx, cy, radius, S, gain_sw=gain_sw, exposure_s=exposure_s)
+                      cx, cy, radius, S, gain_sw=gain_sw, exposure_s=exposure_s,
+                      transparency=transparency)
 
         # ── Planets & minor bodies ───────────────────────────────────────
         if solar_bodies is not None:
@@ -215,6 +222,10 @@ class AllSkyRenderer:
                       cx, cy, radius, exposure_s, atm_state, gain_sw=200):
         H = W = self.render_size
         gm = _gain_mult(gain_sw)
+        
+        # Get transparency from atmospheric state
+        transparency = getattr(atm_state, 'transparency', 1.0)
+        
         for star in universe.get_stars():
             if star.mag > mag_limit:
                 continue
@@ -234,6 +245,7 @@ class AllSkyRenderer:
                     continue
             photons = (mag_to_flux(eff_mag, self._area_cm2 / math.pi * 2, exposure_s)
                        * self._qe * gm)
+            photons *= transparency  # Scale by atmospheric transparency
             if photons < 0.3:
                 continue
             bv = getattr(star, 'bv_color', 0.6)
