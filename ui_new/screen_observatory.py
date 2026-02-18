@@ -40,7 +40,7 @@ class ObservatoryScreen(BaseScreen):
         self.current_camera = "ZWO ASI294MC"
         self.current_filter = "Luminance"
         
-        # Weather system (seed=42 everywhere)
+        # Weather system (seed=42 for consistency until Sprint 17 centralizes in GameState)
         from atmosphere.weather import WeatherSystem
         from core.time_controller import TimeController
         self.weather_system = WeatherSystem(base_seeing=2.5, seed=42)

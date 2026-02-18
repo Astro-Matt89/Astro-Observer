@@ -35,7 +35,7 @@ class WeatherSystem:
     """
     Procedural weather generator with smooth seeing and nightly conditions.
     
-    Seed consistency: Use seed=42 everywhere until Sprint 17 centralises in GameState.
+    Seed consistency: Use seed=42 everywhere until Sprint 17 centralizes in GameState.
     """
     
     def __init__(self, base_seeing: float = 2.5, seed: int = 42):
