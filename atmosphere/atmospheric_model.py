@@ -278,6 +278,10 @@ class AtmosphericState:
     # Extinction at zenith (mag)
     extinction_zenith_v: float
 
+    # New fields (Sprint 14a)
+    transparency: float = 1.0
+    weather_condition: str = "clear"  # Store as string for JSON serialization
+
     @property
     def imaging_allowed(self) -> bool:
         return get_phase_properties(self.day_phase).imaging_allowed
@@ -351,6 +355,10 @@ class AtmosphericModel:
     def __init__(self, observer: Optional[ObserverLocation] = None):
         self.observer = observer or ObserverLocation()
         self._seeing_seed = 42
+        
+        # Weather system (seed=42 everywhere until Sprint 17)
+        from .weather import WeatherSystem
+        self.weather_system = WeatherSystem(base_seeing=2.5, seed=42)
 
     def compute(self, dt: datetime,
                 sun_body=None,
@@ -399,13 +407,12 @@ class AtmosphericModel:
             altitude_m           = self.observer.altitude_m,
         )
 
-        # Seeing
-        elapsed_s = (dt - datetime(2000,1,1,tzinfo=timezone.utc)).total_seconds()
-        fwhm = seeing_fwhm_arcsec(
-            self.observer.base_seeing_arcsec,
-            time_s = elapsed_s,
-            seed   = self._seeing_seed,
-        )
+        # Seeing (from weather system)
+        fwhm = self.weather_system.seeing(jd)
+        
+        # Weather conditions
+        transparency = self.weather_system.transparency(jd)
+        weather_condition = self.weather_system.condition(jd).value  # Convert enum to string
 
         # Zenith extinction
         ext_z = extinction_mag(90.0, 0.6, self.observer.altitude_m)
@@ -425,6 +432,8 @@ class AtmosphericModel:
             sky_bg_g             = g_bg,
             sky_bg_b             = b_bg,
             extinction_zenith_v  = ext_z,
+            transparency         = transparency,
+            weather_condition    = weather_condition,
         )
 
     @staticmethod

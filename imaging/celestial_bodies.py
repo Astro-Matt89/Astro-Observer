@@ -180,7 +180,8 @@ def draw_sun(field: np.ndarray,
              cx: float, cy: float, radius: float,
              render_size: int,
              gain_sw: int = 200,
-             exposure_s: float = 0.5) -> None:
+             exposure_s: float = 0.5,
+             transparency: float = 1.0) -> None:
     """
     Sole con bloom fisicamente basato su flusso reale e gain camera.
 
@@ -199,6 +200,7 @@ def draw_sun(field: np.ndarray,
 
     # Flusso fisico reale
     total_ph = mag_to_flux(-26.74, _ALLSKY_AREA_CM2, exposure_s)
+    total_ph *= transparency  # Scale by atmospheric transparency
 
     # Bloom in unità campo (stessa scala del background e stelle)
     bloom = _bloom_from_photons((H, W), px, py, total_ph, gain_sw, solar_alt_deg)
@@ -235,7 +237,8 @@ def draw_moon(field: np.ndarray,
               cx: float, cy: float, radius: float,
               render_size: int,
               gain_sw: int = 200,
-              exposure_s: float = 0.5) -> None:
+              exposure_s: float = 0.5,
+              transparency: float = 1.0) -> None:
     """
     Luna con disco, fase corretta e bloom fisicamente calibrato.
 
@@ -260,6 +263,7 @@ def draw_moon(field: np.ndarray,
     # mag_full = -12.73, si riduce di ~2.5log10(illuminated)
     mag_moon = -12.73 + 2.5 * math.log10(max(illuminated, 0.01))
     total_ph  = mag_to_flux(mag_moon, _ALLSKY_AREA_CM2, exposure_s)
+    total_ph *= transparency  # Scale by atmospheric transparency
 
     # Bloom fisico
     bloom = _bloom_from_photons((H, W), px, py, total_ph, gain_sw, moon_alt_deg)
