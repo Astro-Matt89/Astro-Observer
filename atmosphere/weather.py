@@ -1,16 +1,12 @@
 """
 Weather System — Procedural weather generation with smooth seeing and nightly conditions.
-
-Provides:
-  - WeatherCondition enum for weather states
-  - NightWeather dataclass for per-night weather parameters
-  - WeatherSystem class for smooth, realistic atmospheric conditions
 """
 
 from enum import Enum
 from dataclasses import dataclass
 import math
 import random
+import numpy as np
 
 
 class WeatherCondition(Enum):
@@ -24,11 +20,114 @@ class WeatherCondition(Enum):
 @dataclass
 class NightWeather:
     """Weather conditions for a single night."""
-    night_jd: float              # JD at midnight
-    transparency: float          # 0.0 (opaque) to 1.0 (perfectly clear)
-    seeing_base: float           # Base seeing FWHM in arcsec
-    cloud_coverage: float        # 0.0 (clear) to 1.0 (overcast)
-    condition: WeatherCondition  # Enum value
+    night_jd: float
+    transparency: float
+    seeing_base: float
+    cloud_coverage: float
+    condition: WeatherCondition
+
+
+class CloudLayer:
+    """
+    Procedural cloud map generator with caching.
+    """
+    
+    def __init__(self, size: int = 512, scale: float = 0.008, seed: int = 42):
+        """
+        Args:
+            size: Cloud map resolution (square)
+            scale: Perlin noise frequency (0.004-0.012 typical)
+            seed: Random seed for deterministic clouds
+        """
+        self.size = size
+        self.scale = scale
+        self.seed = seed
+        self._cache = {}  # Cache maps by (size, seed, scale, jd_key)
+        self._max_cache_size = 20  # Keep last 20 unique maps
+    
+    def _jd_cache_key(self, jd: float) -> int:
+        """Round JD to nearest hour for cache stability."""
+        return int(jd * 24)  # changes every hour
+    
+    def generate_cloud_map(self, jd: float, coverage: float) -> np.ndarray:
+        """
+        Generate procedural cloud map (CACHED PER HOUR).
+        
+        Args:
+            jd: Julian Date (used as time seed)
+            coverage: Cloud coverage 0.0 (clear) to 1.0 (overcast)
+            
+        Returns:
+            Cloud transparency map [0,1] where:
+              1.0 = clear sky
+              0.0 = opaque cloud
+        """
+        if coverage < 0.05:
+            # Clear sky - return full transparency (no computation needed)
+            return np.ones((self.size, self.size), dtype=np.float32)
+        
+        # Check cache
+        cache_key = (self.size, self.seed, self.scale, self._jd_cache_key(jd))
+        if cache_key in self._cache:
+            base_clouds = self._cache[cache_key]
+        else:
+            # Generate new cloud map (EXPENSIVE - only once per hour)
+            base_clouds = self._generate_perlin_clouds()
+            
+            # Cache management
+            self._cache[cache_key] = base_clouds
+            if len(self._cache) > self._max_cache_size:
+                # Remove oldest entry
+                oldest_key = next(iter(self._cache))
+                del self._cache[oldest_key]
+        
+        # Apply coverage threshold (fast operation)
+        threshold = 1.0 - coverage
+        cloud_mask = base_clouds > threshold
+        
+        # Smooth transition at cloud edges
+        transparency = np.where(cloud_mask,
+                                1.0 - (base_clouds - threshold) / (1.0 - threshold + 1e-6),
+                                1.0)
+        
+        return transparency.astype(np.float32)
+    
+    def _generate_perlin_clouds(self) -> np.ndarray:
+        """
+        Generate base Perlin noise cloud pattern.
+        This is the slow function - called only once per hour.
+        """
+        try:
+            from perlin_numpy import generate_perlin_noise_2d
+            
+            # Perlin noise at base scale
+            noise1 = generate_perlin_noise_2d(
+                (self.size, self.size),
+                (int(self.size * self.scale), int(self.size * self.scale)),
+                tileable=(True, True))
+            
+            # Add detail layer (higher frequency)
+            noise2 = generate_perlin_noise_2d(
+                (self.size, self.size),
+                (int(self.size * self.scale * 2), int(self.size * self.scale * 2)),
+                tileable=(True, True))
+            
+            # Combine layers
+            clouds = 0.7 * noise1 + 0.3 * noise2
+            
+            # Normalize to [0, 1]
+            clouds = (clouds - clouds.min()) / (clouds.max() - clouds.min() + 1e-9)
+            
+            return clouds
+            
+        except ImportError:
+            # Fallback: simple random clouds if perlin_numpy not available
+            rng = np.random.RandomState(self.seed + int(self.size * self.scale * 1000))
+            return rng.rand(self.size, self.size).astype(np.float32)
+    
+    def clear_cache(self):
+        """Clear the cloud map cache."""
+        self._cache.clear()
 
 
 class WeatherSystem:
@@ -88,27 +187,25 @@ class WeatherSystem:
             self._night_cache[night_id] = self._generate_night(night_id)
         return self._night_cache[night_id]
     
-    def transparency(self, jd: float) -> float:
-        """Current atmospheric transparency (0.0 = opaque, 1.0 = perfect)."""
-        return self._get_night(jd).transparency
-    
-    def condition(self, jd: float) -> WeatherCondition:
-        """Current weather condition enum."""
-        return self._get_night(jd).condition
-    
-    def seeing(self, jd: float) -> float:
+    def get_seeing(self, jd: float, smooth_minutes: float = 5.0) -> float:
         """
-        Smooth seeing FWHM in arcsec.
+        Get seeing FWHM in arcsec with smooth temporal variation.
         
-        Uses sinusoidal interpolation over 10-minute cycles.
-        No abrupt jumps like the old 5-minute discrete system.
+        Args:
+            jd: Julian Date
+            smooth_minutes: Timescale for seeing variations (minutes)
+            
+        Returns:
+            Seeing FWHM in arcseconds
         """
         night = self._get_night(jd)
+        base = night.seeing_base
         
-        # 10-minute cycle (1/144 day)
-        t = (jd % (1.0/144.0)) * 144.0  # 0..1 over 10 min
+        # Smooth variation using sine wave
+        # Period ~ smooth_minutes, amplitude ~ ±20% of base
+        t = (jd - night.night_jd) * 1440.0  # Convert to minutes
+        freq = 2.0 * math.pi / smooth_minutes
+        variation = 0.2 * math.sin(freq * t + self.seed)
         
-        # Sinusoidal variation: base ± 30%
-        variation = 0.3 * math.sin(2 * math.pi * t)
-        
-        return night.seeing_base * (1.0 + variation)
+        seeing = base * (1.0 + variation)
+        return max(0.5, min(10.0, seeing))  # Clamp to reasonable range

@@ -207,7 +207,7 @@ class AllSkyRenderer:
         radius  = S / 2.0 - 1.5
         
         # Update cloud layer with current time (Sprint 14b)
-        self.cloud_layer.update(jd)
+        self.cloud_layer.step(exposure_s)
 
         # ── Background (sky colour + spatial noise + airglow) ──────────
         field = build_allsky_background(S, atm_state, exposure_s, gain_sw=gain_sw)
