@@ -220,21 +220,84 @@ Per ciascuno:
 
 ### Sprint 15 — VFX e Fluidità (2 layer)
 
-**Layer fisico (1–2s, invariato):**
-- Frame fisicamente accurato come ora
+**Filosofia:** Separare fisica (accuratezza, pesante, 1–2s per frame) da estetica (bellezza, leggera, 15fps real-time). Il layer fisico genera frame accurati ma lenti. Il layer VFX li interpola/decora a 15fps per fluidità visiva.
 
-**Layer visivo real-time (su frame precedente, ~15fps):**
-- [ ] Interpolazione inter-frame per transizioni giorno/notte fluide
-- [ ] Twinkling stelle come perturbazione sul frame già renderizzato
-- [ ] Nuvole animate come overlay semitrasparente
-- [ ] Transizioni cromatiche del cielo fluide durante accelerazione tempo
+**Architettura:**
+```
+Layer Fisico (1–2s interval)          Layer VFX (15fps real-time)
+────────────────────────              ───────────────────────────
+AllSkyRenderer.render()               VFXLayer (pygame Surface)
+  ↓ (1–4 seconds compute)               ↓ (~15ms per frame)
+  Stars, planets, physics               Ordered dithering pass (Bayer 8×8 o Blue Noise)
+  ↓                                     ↓
+  field (H,W,3) numpy                   Bloom/glow (bright stars + planets)
+  ↓                                     ↓
+  tone mapping → pygame Surface         Multi-layer clouds (foschia + cumuli + cirri)
+  ↓                                     ↓
+  [cached as last_physical_frame]       Twinkling (alpha modulation 0.5–2Hz)
+                                        ↓
+                                        Frame interpolation (smooth color transitions)
+                                        ↓
+                                        Composite → screen at 15fps
+```
 
-**VFX aggiuntivi:**
-- [ ] Via Lattea come texture procedurale diffusa (alto impatto visivo, costo basso)
-- [ ] Aerei e satelliti in transito (puramente grafici, danno vita all'immagine)
-- [ ] Colori stelle più saturi nell'allsky (B-V più pronunciato come nelle foto reali)
-- [ ] Lens flare direzionale quando il Sole è vicino al bordo del cerchio
-- [ ] Diffraction spikes per stelle brillanti (dipendenti dall'ottica)
+#### Layer fisico (invariato, 1–2s per frame)
+- Frame fisicamente accurato come ora (stelle, pianeti, atmosfera, nuvole base)
+- Generato solo quando necessario (nuovo JD, nuovo FOV, nuova camera)
+- Cached come texture — il layer VFX ci disegna sopra senza ricomputare la fisica
+
+#### Layer visivo real-time (15fps, ~15ms per frame)
+
+**Core VFX:**
+- [ ] **Ordered dithering** — Bayer 8×8 matrix o Blue Noise texture per transizioni smooth senza banding
+  - Large scale (16×16 tiles) per gradienti colore cielo
+  - Medium scale (8×8) per bordi nuvole
+  - Fine scale (2×2) per noise organico stellare
+  - Target: dithering "gradevole" stile fotografia analogica, non pixelato duro
+- [ ] **Interpolazione inter-frame** per transizioni giorno/notte fluide
+  - Blend con easing curve tra prev_frame e next_frame
+  - A ×3600 (1h/s) i colori del tramonto scorrono fluidi invece di saltare
+- [ ] **Twinkling stelle** — perturbazione alpha/luma su stelle già renderizzate (0.5–2Hz)
+  - Solo stelle mag < 4.0 (le deboli non scintillano visibilmente)
+  - Ampiezza dipendente da airmass (orizzonte scintilla di più)
+- [ ] **Transizioni cromatiche** fluide del cielo durante accelerazione tempo
+
+**Cloud layers multipli (upgrade del layer base di Sprint 14b):**
+- [ ] **Low fog** (foschia bassa) — quasi trasparente, layer più basso
+- [ ] **Cumulus** (cumuli medi) — layer attuale di Sprint 14b
+- [ ] **Cirrus** (veli alti) — molto trasparenti, si muovono più veloci dei cumuli, sopra tutto
+- [ ] Composite con alpha blending — 3 layer con velocità/altezza/opacità diverse
+- [ ] Bordi nuvole con gradient smooth + dithering (no hard edges)
+
+**Post-processing effects:**
+- [ ] **Bloom sulle stelle brillanti** — stelle mag < 2.0 hanno alone realistico
+  - Gaussian blur approximation (3-pass box blur)
+  - Additive blend sul frame originale
+  - Costo: ~5–10ms per 560×560
+- [ ] **Diffraction spikes** (ottica newtoniana) — 4 spikes a croce per stelle brillanti
+  - Solo se telescopio è newtoniano (non su rifrattori)
+  - Length proporzionale a magnitude (più brillante = spike più lungo)
+  - Alpha gradient lungo lo spike
+- [ ] **Lens flare direzionale** quando Sole è vicino al bordo del cerchio allsky
+- [ ] **Via Lattea procedurale** — texture 512×512 precomputed con stelle dense
+  - Composite con alpha 0.3, solo di notte
+  - Ruota con tempo siderale (galactic plane angle)
+  - Alto impatto visivo, zero costo (texture statica)
+- [ ] **Colori stelle più saturi** nell'allsky (B-V più pronunciato, stile foto reale)
+
+**Elementi dinamici puramente grafici:**
+- [ ] **Aerei in transito** — sprite animati che attraversano il campo (puramente decorativo)
+- [ ] **Satelliti LEO** — punti luminosi veloci, occasionali (Starlink, ISS)
+  - Non fisici (TLE tracking è Sprint 18+), ma danno vita all'immagine
+
+#### Performance target
+- Layer fisico: 1–4s per frame (invariato, OK)
+- Layer VFX: 15fps stabili (66ms budget) anche a ×3600
+- Dithering: <2ms (lookup table)
+- Bloom: 5–10ms (box blur 3-pass)
+- Cloud composite: <3ms (3 alpha blends)
+- Twinkling: <1ms (alpha modulation su array pre-filtrato)
+- **Total VFX overhead: <20ms → 50fps anche con tutto attivo**
 
 ### Sprint 16 — Oggetti Minori Avanzati
 
