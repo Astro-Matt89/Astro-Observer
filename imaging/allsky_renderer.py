@@ -14,7 +14,7 @@ from imaging.celestial_bodies import (draw_sun, draw_moon,
                                        draw_atmospheric_glow)
 from imaging.solar_bodies_renderer import render_solar_bodies, render_planet
 from universe.orbital_body import equatorial_to_altaz
-
+from atmosphere.cloud_layer import CloudLayer
 
 def _sky_scale(solar_alt_deg: float) -> float:
     """
@@ -36,13 +36,11 @@ def _sky_scale(solar_alt_deg: float) -> float:
     else:
         return max(0.0005, 0.001 * (1.0 - (solar_alt_deg - 15.0) / 75.0))
 
-
 def _make_psf(sigma: float, size: int) -> np.ndarray:
     k = np.arange(size) - size // 2
     g = np.exp(-0.5 * (k / sigma) ** 2)
     psf = np.outer(g, g)
     return (psf / psf.sum()).astype(np.float32)
-
 
 def _radec_to_xy(ra_deg, dec_deg, jd, lat, lon, cx, cy, radius):
     alt, az = equatorial_to_altaz(ra_deg, dec_deg, lat, lon, jd)
@@ -51,7 +49,6 @@ def _radec_to_xy(ra_deg, dec_deg, jd, lat, lon, cx, cy, radius):
     r_px = (90.0 - alt) / 90.0 * radius
     az_r  = math.radians(az)
     return cx + r_px * math.sin(az_r), cy - r_px * math.cos(az_r), alt
-
 
 def _gain_mult(gain_sw: int) -> float:
     """
@@ -62,7 +59,6 @@ def _gain_mult(gain_sw: int) -> float:
     g_eff = 3.6 / (1.0 + gain_sw / 55.0)
     g_ref = 3.6 / (1.0 + 200.0 / 55.0)
     return g_ref / g_eff
-
 
 def build_allsky_background(size: int, atm_state, exposure_s: float = 1.0,
                              gain_sw: int = 200) -> np.ndarray:
@@ -75,21 +71,24 @@ def build_allsky_background(size: int, atm_state, exposure_s: float = 1.0,
     r_norm = np.clip(r_px / radius, 0.0, 1.0)
     inside = (r_px <= radius).astype(np.float32)
 
+    # Get transparency from atmospheric state
+    transparency = getattr(atm_state, 'transparency', 1.0)
+
     if atm_state is not None:
         solar_alt  = atm_state.solar_alt_deg
         solar_az_r = math.radians(float(getattr(atm_state, 'solar_az_deg', 180.0)))
         scale = _sky_scale(solar_alt)
         gm = _gain_mult(gain_sw)
-        bg_r = atm_state.sky_bg_r * exposure_s * scale * gm
-        bg_g = atm_state.sky_bg_g * exposure_s * scale * gm
-        bg_b = atm_state.sky_bg_b * exposure_s * scale * gm
+        bg_r = atm_state.sky_bg_r * exposure_s * scale * gm * transparency
+        bg_g = atm_state.sky_bg_g * exposure_s * scale * gm * transparency
+        bg_b = atm_state.sky_bg_b * exposure_s * scale * gm * transparency
     else:
         solar_alt  = -30.0
         solar_az_r = math.pi
         gm = _gain_mult(gain_sw)
-        bg_r = 0.10 * exposure_s * gm
-        bg_g = 0.20 * exposure_s * gm
-        bg_b = 0.60 * exposure_s * gm
+        bg_r = 0.10 * exposure_s * gm * transparency
+        bg_g = 0.20 * exposure_s * gm * transparency
+        bg_b = 0.60 * exposure_s * gm * transparency
 
     # Airmass gradient
     horizon_boost = 1.20 if solar_alt < -12.0 else (1.45 if solar_alt < 0.0 else 1.8)
@@ -128,6 +127,40 @@ def build_allsky_background(size: int, atm_state, exposure_s: float = 1.0,
     return np.stack([np.clip(R, 0, None), np.clip(G, 0, None), np.clip(B, 0, None)],
                     axis=-1).astype(np.float32)
 
+def _apply_cloud_overlay(field: np.ndarray, cloud_layer: CloudLayer, 
+                         cx: float, cy: float, radius: float) -> None:
+    """
+    Apply procedural cloud layer overlay to rendered field (in-place).
+    For each pixel in the fisheye:
+      - Convert (x,y) → (az, alt)
+      - Query cloud_layer.get_coverage_at(az, alt) → coverage 0..1
+      - Blend: darken background + add cloud color
+
+    Cloud color: greyish-white (200, 210, 220) RGB photons
+    """
+    H, W = field.shape[:2]
+    for row in range(H):
+        for col in range(W):
+            dx = col - cx
+            dy = row - cy
+            r = math.sqrt(dx * dx + dy * dy)
+            if r > radius:
+                continue  # Outside fisheye circle
+            # Convert pixel to alt/az
+            r_norm = r / radius
+            alt = 90.0 * (1.0 - r_norm)  # 0° at edge, 90° at zenith
+            az_rad = math.atan2(dx, -dy)  # N=0°, E=90°, ...
+            az = math.degrees(az_rad) % 360.0
+            # Get cloud coverage at this direction
+            coverage = cloud_layer.get_coverage_at(az, alt)
+            if coverage > 0.01:
+                # Cloud color in photon units (greyish-white)
+                cloud_rgb = np.array([200.0, 210.0, 220.0], dtype=np.float32) * coverage
+                # Blend: darken sky + add cloud
+                # coverage = 1.0 → 90% darkening + full cloud color
+                # coverage = 0.5 → 45% darkening + half cloud color
+                field[row, col] = field[row, col] * (1.0 - coverage * 0.9) + cloud_rgb
+
 
 class AllSkyRenderer:
     FOCAL_LENGTH_MM = 3.0
@@ -143,6 +176,14 @@ class AllSkyRenderer:
         ap_cm          = self.APERTURE_MM / 10.0
         self._area_cm2 = math.pi * (ap_cm / 2.0) ** 2
         self._qe       = camera_spec.quantum_efficiency
+        
+        # Cloud layer for procedural clouds (Sprint 14b)
+        self.cloud_layer = CloudLayer(
+            seed=42,
+            wind_speed=5.0,
+            wind_direction=270.0,  # West wind
+            cloud_base_coverage=0.3
+        )
 
     def render(self, jd: float, universe,
                exposure_s: float = 1.0,
@@ -164,6 +205,9 @@ class AllSkyRenderer:
         S      = self.render_size
         cx = cy = S / 2.0
         radius  = S / 2.0 - 1.5
+        
+        # Update cloud layer with current time (Sprint 14b)
+        self.cloud_layer.update(jd)
 
         # ── Background (sky colour + spatial noise + airglow) ──────────
         field = build_allsky_background(S, atm_state, exposure_s, gain_sw=gain_sw)
@@ -183,19 +227,23 @@ class AllSkyRenderer:
                                gain_sw=gain_sw)
 
         # ── Solar disk ──────────────────────────────────────────────────
+        transparency = getattr(atm_state, 'transparency', 1.0)
         if sun_body is not None:
             draw_sun(field, sun_body._alt_deg, sun_body._az_deg,
-                     cx, cy, radius, S, gain_sw=gain_sw, exposure_s=exposure_s)
+                     cx, cy, radius, S, gain_sw=gain_sw, exposure_s=exposure_s,
+                     transparency=transparency)
         elif solar_alt > -2.0:
             draw_sun(field, solar_alt, solar_az, cx, cy, radius, S,
-                     gain_sw=gain_sw, exposure_s=exposure_s)
+                     gain_sw=gain_sw, exposure_s=exposure_s,
+                     transparency=transparency)
 
         # ── Lunar disk ──────────────────────────────────────────────────
         if moon_body is not None and moon_body._alt_deg > 0.5:
             draw_moon(field,
                       moon_body._alt_deg, moon_body._az_deg,
                       moon_body._phase_angle,
-                      cx, cy, radius, S, gain_sw=gain_sw, exposure_s=exposure_s)
+                      cx, cy, radius, S, gain_sw=gain_sw, exposure_s=exposure_s,
+                      transparency=transparency)
 
         # ── Planets & minor bodies ───────────────────────────────────────
         if solar_bodies is not None:
@@ -209,12 +257,19 @@ class AllSkyRenderer:
                 except Exception:
                     pass
 
+        # ── Cloud overlay (Sprint 14b) ────────────────────────────────────
+        _apply_cloud_overlay(field, self.cloud_layer, cx, cy, radius)
+
         return field
 
     def _render_stars(self, field, jd, universe, mag_limit,
                       cx, cy, radius, exposure_s, atm_state, gain_sw=200):
         H = W = self.render_size
         gm = _gain_mult(gain_sw)
+        
+        # Get transparency from atmospheric state
+        transparency = getattr(atm_state, 'transparency', 1.0)
+        
         for star in universe.get_stars():
             if star.mag > mag_limit:
                 continue
@@ -234,6 +289,7 @@ class AllSkyRenderer:
                     continue
             photons = (mag_to_flux(eff_mag, self._area_cm2 / math.pi * 2, exposure_s)
                        * self._qe * gm)
+            photons *= transparency  # Scale by atmospheric transparency
             if photons < 0.3:
                 continue
             bv = getattr(star, 'bv_color', 0.6)

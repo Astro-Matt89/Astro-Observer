@@ -39,6 +39,12 @@ class ObservatoryScreen(BaseScreen):
         self.current_telescope = "Newtonian 150mm f/5"
         self.current_camera = "ZWO ASI294MC"
         self.current_filter = "Luminance"
+        
+        # Weather system (seed=42 everywhere)
+        from atmosphere.weather import WeatherSystem
+        from core.time_controller import TimeController
+        self.weather_system = WeatherSystem(base_seeing=2.5, seed=42)
+        self._tc = TimeController()
     
     def _create_buttons(self):
         """Create main navigation buttons"""
@@ -190,6 +196,81 @@ class ObservatoryScreen(BaseScreen):
         """Update observatory state"""
         # Update time
         self.current_time = datetime.now(timezone.utc)
+        # Update time controller - MODIFIED: changed from tick() to step()
+        self._tc.step(dt)
+    
+    def _draw_weather_widget(self, surface: pygame.Surface, jd: float):
+        """Draw weather conditions panel."""
+        # Get screen dimensions
+        screen_w = surface.get_width()
+        
+        # Panel position (top-right corner)
+        panel_w, panel_h = 280, 120
+        panel_x = screen_w - panel_w - 20
+        panel_y = 20
+        
+        # Semi-transparent panel using theme colors
+        panel_surf = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+        panel_surf.fill((*self.theme.colors.BG_PANEL, 200))
+        pygame.draw.rect(panel_surf, self.theme.colors.FG_PRIMARY, (0, 0, panel_w, panel_h), 1)
+        
+        # Title
+        font_title = pygame.font.SysFont('monospace', 14, bold=True)
+        title = font_title.render("WEATHER CONDITIONS", True, self.theme.colors.FG_PRIMARY)
+        panel_surf.blit(title, (10, 8))
+        
+        # Get current weather
+        transparency = self.weather_system.transparency(jd)
+        seeing = self.weather_system.seeing(jd)
+        condition = self.weather_system.condition(jd)
+        
+        # Condition icons
+        condition_icons = {
+            "clear": "☀",
+            "partly_cloudy": "⛅",
+            "cloudy": "☁",
+            "overcast": "🌫",
+        }
+        icon = condition_icons.get(condition.value, "?")
+        
+        # Condition colors
+        if transparency > 0.8:
+            cond_color = self.theme.colors.SUCCESS
+        elif transparency > 0.5:
+            cond_color = self.theme.colors.ACCENT_YELLOW
+        else:
+            cond_color = self.theme.colors.ACCENT_RED
+        
+        font_data = pygame.font.SysFont('monospace', 12)
+        
+        # Condition
+        y = 35
+        cond_text = f"{icon} {condition.value.upper().replace('_', ' ')}"
+        cond_surf = font_data.render(cond_text, True, cond_color)
+        panel_surf.blit(cond_surf, (10, y))
+        
+        # Transparency
+        y += 22
+        transp_text = f"Transparency: {transparency*100:.0f}%"
+        transp_surf = font_data.render(transp_text, True, self.theme.colors.FG_PRIMARY)
+        panel_surf.blit(transp_surf, (10, y))
+        
+        # Seeing
+        y += 22
+        seeing_text = f"Seeing: {seeing:.1f}\""
+        seeing_surf = font_data.render(seeing_text, True, self.theme.colors.FG_PRIMARY)
+        panel_surf.blit(seeing_surf, (10, y))
+        
+        # Quality bar
+        y += 25
+        bar_w = 200
+        bar_h = 10
+        pygame.draw.rect(panel_surf, (40, 40, 40), (10, y, bar_w, bar_h))
+        fill_w = int(bar_w * transparency)
+        pygame.draw.rect(panel_surf, cond_color, (10, y, fill_w, bar_h))
+        pygame.draw.rect(panel_surf, self.theme.colors.FG_PRIMARY, (10, y, bar_w, bar_h), 1)
+        
+        surface.blit(panel_surf, (panel_x, panel_y))
     
     def render(self, surface: pygame.Surface):
         """Render observatory hub"""
@@ -219,7 +300,7 @@ class ObservatoryScreen(BaseScreen):
         col1_x = 30
         col2_x = W // 3 + 20
         col3_x = 2 * W // 3 + 10
-        status_y = 120
+        status_y = 120;
         
         # Column 1: Target info
         self.theme.draw_text(surface, self.theme.fonts.normal(),
@@ -283,6 +364,10 @@ class ObservatoryScreen(BaseScreen):
         footer = pygame.Rect(10, H - 50, W - 20, 40)
         self.draw_footer(surface, footer,
                         "[1] Sky Chart  [2] Imaging  [3] Catalogs  [4] Equipment  [5] Career  [F5] Save  [F9] Load  [ESC] Quit")
+        
+        # Weather widget
+        jd = self._tc.jd
+        self._draw_weather_widget(surface, jd)
     
     def set_target(self, target_name: str):
         """Update current target"""
