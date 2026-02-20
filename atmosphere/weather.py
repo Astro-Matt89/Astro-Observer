@@ -187,7 +187,20 @@ class WeatherSystem:
             self._night_cache[night_id] = self._generate_night(night_id)
         return self._night_cache[night_id]
     
-    def get_seeing(self, jd: float, smooth_minutes: float = 5.0) -> float:
+    def transparency(self, jd: float) -> float:
+        """
+        Get atmospheric transparency at given JD.
+        
+        Args:
+            jd: Julian Date
+            
+        Returns:
+            Transparency 0.0 (opaque) to 1.0 (perfect)
+        """
+        night = self._get_night(jd)
+        return night.transparency
+    
+    def seeing(self, jd: float, smooth_minutes: float = 5.0) -> float:
         """
         Get seeing FWHM in arcsec with smooth temporal variation.
         
@@ -209,3 +222,35 @@ class WeatherSystem:
         
         seeing = base * (1.0 + variation)
         return max(0.5, min(10.0, seeing))  # Clamp to reasonable range
+    
+    def condition(self, jd: float) -> WeatherCondition:
+        """
+        Get weather condition category at given JD.
+        
+        Args:
+            jd: Julian Date
+            
+        Returns:
+            WeatherCondition enum value
+        """
+        night = self._get_night(jd)
+        return night.condition
+    
+    def cloud_coverage(self, jd: float) -> float:
+        """
+        Get cloud coverage at given JD.
+        
+        Args:
+            jd: Julian Date
+            
+        Returns:
+            Cloud coverage 0.0 (clear) to 1.0 (overcast)
+        """
+        night = self._get_night(jd)
+        return night.cloud_coverage
+    
+    def get_seeing(self, jd: float, smooth_minutes: float = 5.0) -> float:
+        """
+        Alias for seeing() for backward compatibility.
+        """
+        return self.seeing(jd, smooth_minutes)
