@@ -191,13 +191,21 @@ class AllSkyRenderer:
         # ── Background (sky colour + spatial noise + airglow) ──────────
         field = build_allsky_background(S, atm_state, exposure_s, gain_sw=gain_sw)
 
-        # Accumulate simulated time
-        self._sim_time_s += exposure_s
+        # Update cloud mask (AFTER field exists)
+        # Use JD from atm_state as time source (not accumulated exposure_s)
+        # This ensures clouds stay synced with game time even when render cache skips frames
+        if atm_state:
+            jd = atm_state.jd
+        else:
+            jd = 2451545.0  # J2000 fallback
 
-        # Update cloud mask
+        sim_time_s = (jd - 2451545.0) * 86400.0  # JD to seconds since J2000
         transparency = getattr(atm_state, 'transparency', 1.0) if atm_state else 1.0
-        current_size = field.shape[0]  # Get current render size from field
-        self._cloud.update(transparency=transparency, sim_time_s=self._sim_time_s, current_size=field.shape[0])
+        current_size = field.shape[0]
+
+        self._cloud.update(transparency=transparency, 
+                           sim_time_s=sim_time_s,
+                           current_size=current_size)
 
         # ── Atmospheric twilight glow (direzionale, prima delle stelle) ─
         solar_alt = atm_state.solar_alt_deg if atm_state else -90.0
