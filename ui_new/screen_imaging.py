@@ -674,38 +674,45 @@ class ImagingScreen(BaseScreen):
         try:
             self._refresh_atm()
             live_exp = 0.5 if self.is_allsky else 1.0
+
+            # ====== PERFORMANCE FIX: Adaptive cache based on time scale ======
+            jd = self._tc.jd
+            time_scale = self._tc.time_scale if hasattr(self._tc, 'time_scale') else 1.0
+
+            # Adaptive cache interval:
+            # - Realtime (x1): update every 1 minute
+            # - x10: update every 10 minutes
+            # - x100: update every 100 minutes
+            # - 1min/sec (x60): update every hour
+            # This keeps update rate constant in *wall time*
+            base_cache_minutes = 1.0  # Base cache in simulated time
+            cache_interval_minutes = base_cache_minutes * max(time_scale, 1.0)
+            cache_interval_jd = cache_interval_minutes / (24.0 * 60.0)
+
+            # Check if we need to update
+            if hasattr(self, '_last_live_jd'):
+                jd_diff = abs(jd - self._last_live_jd)
+                if jd_diff < cache_interval_jd and self.live is not None:
+                    # Reuse cached live image
+                    return
+
+            self._last_live_jd = jd
+            # ====== END FIX ======
+
             # For allsky: render at the size that will be displayed (no upscale)
-            # Estimate viewer square size: min(W - panel - 8, H - 36 - 114 - 4)
-            # Default 560 covers 1280×720 and most window sizes
             if self.is_allsky and self.allsky_renderer:
                 self.allsky_renderer.render_size = self._live_sq_size()
             mono, rgb = self._sky_signal(live_exp)
             self.live = mono; self.live_rgb = rgb
             if mono is not None:
                 if self.is_allsky and rgb is not None:
-                    # For allsky: use all three channels combined for robust stats
-                    # G channel is luminance proxy; most pixels are pure sky background
-                    ref = rgb[:,:,1]   # green channel
-                else:
-                    ref = mono
-
-                if self.is_allsky and rgb is not None:
                     # Allsky stretch: calibrate white so sky background appears as
                     # dark indigo/blue (~25-35/255) and stars pop out clearly.
-                    #
-                    # Method: compute median sky level from inside-disk pixels,
-                    # then solve for the white point that maps sky → target_brightness
-                    # using the asinh stretch curve: f(x) = asinh(x/beta)/asinh(1/beta)
-                    # with beta=0.03 (hardcoded in display_pipeline).
-                    #
-                    # sky_target/255 = asinh(sky/white / beta) / asinh(1/beta)
-                    # → white = sky / (sinh(sky_target * asinh(1/beta)/255) * beta)
                     import math as _math
                     _beta  = 0.03
-                    _asnh1 = _math.asinh(1.0 / _beta)  # ≈ 4.199
-                    _sky_target = 28   # /255 — deep dark sky, slightly visible
+                    _asnh1 = _math.asinh(1.0 / _beta)
+                    _sky_target = 28
 
-                    # Median of green channel inside disk (most pixels are sky)
                     _ref = rgb[:,:,1]
                     _S = _ref.shape[0]; _cx = _cy = _S / 2.0; _rad = _S/2.0 - 2
                     _yy, _xx = np.mgrid[0:_S, 0:_S]
@@ -715,16 +722,22 @@ class ImagingScreen(BaseScreen):
                     if _sky_med > 0:
                         _t = _math.sinh(_sky_target * _asnh1 / 255.0) * _beta
                         _white = _sky_med / max(_t, 1e-9)
-                        # Clamp: must not be so low stars clip, not so high sky goes black
-                        self.black = 0.0
-                        self.white = float(np.clip(_white, 20.0, 500.0))
+                        _qe = self._qe_allsky()
+                        _nominal_white = 800.0 / max(_qe, 0.1)
+                        self.white = max(0.5 * _nominal_white,
+                                    min(3.0 * _nominal_white, _white))
                     else:
-                        self.black = 0.0
-                        self.white = 100.0
+                        self.white = 1200.0 / max(self._qe_allsky(), 0.1)
+                    self.black = 0.0
+                    ref = _ref
                 else:
-                    self.black = float(np.percentile(ref, 0.5))
-                    self.white = float(np.percentile(ref, 99.5))
-        except Exception: pass
+                    ref = mono
+                # sync sliders
+                if self._sl_white: self._sl_white.value = self.white
+                if self._sl_black: self._sl_black.value = self.black
+        except Exception as e:
+            print(f"Live update error: {e}")
+            pass
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
     def on_enter(self):
