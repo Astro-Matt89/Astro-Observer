@@ -5,6 +5,7 @@ SKY_SCALE adattivo: notte scura (0.055) → crepuscolo (0.008) → giorno (0.001
 Stelle: singolo pixel per mag>=3, PSF 3x3 per mag<3, PSF 5x5 per mag<0
 """
 from __future__ import annotations
+from dataclasses import field
 import math
 import numpy as np
 from typing import Optional, Tuple
@@ -127,39 +128,24 @@ def build_allsky_background(size: int, atm_state, exposure_s: float = 1.0,
     return np.stack([np.clip(R, 0, None), np.clip(G, 0, None), np.clip(B, 0, None)],
                     axis=-1).astype(np.float32)
 
-def _apply_cloud_overlay(field: np.ndarray, cloud_layer: CloudLayer, 
-                         cx: float, cy: float, radius: float) -> None:
+def _apply_cloud_overlay(field: np.ndarray, cloud_mask: np.ndarray) -> None:
     """
-    Apply procedural cloud layer overlay to rendered field (in-place).
-    For each pixel in the fisheye:
-      - Convert (x,y) → (az, alt)
-      - Query cloud_layer.get_coverage_at(az, alt) → coverage 0..1
-      - Blend: darken background + add cloud color
+    Composite cloud mask onto the rendered field in-place.
+    
+    Args:
+        field:      (H, W, 3) float32 in-place
+        cloud_mask: (H, W) float32, 0=clear, 1=opaque
+    """
+    # Cloud colour (photon units, similar to a faint background)
+    cloud_r = 8.0
+    cloud_g = 9.0
+    cloud_b = 10.0   # slightly blue-grey
 
-    Cloud color: greyish-white (200, 210, 220) RGB photons
-    """
-    H, W = field.shape[:2]
-    for row in range(H):
-        for col in range(W):
-            dx = col - cx
-            dy = row - cy
-            r = math.sqrt(dx * dx + dy * dy)
-            if r > radius:
-                continue  # Outside fisheye circle
-            # Convert pixel to alt/az
-            r_norm = r / radius
-            alt = 90.0 * (1.0 - r_norm)  # 0° at edge, 90° at zenith
-            az_rad = math.atan2(dx, -dy)  # N=0°, E=90°, ...
-            az = math.degrees(az_rad) % 360.0
-            # Get cloud coverage at this direction
-            coverage = cloud_layer.get_coverage_at(az, alt)
-            if coverage > 0.01:
-                # Cloud color in photon units (greyish-white)
-                cloud_rgb = np.array([200.0, 210.0, 220.0], dtype=np.float32) * coverage
-                # Blend: darken sky + add cloud
-                # coverage = 1.0 → 90% darkening + full cloud color
-                # coverage = 0.5 → 45% darkening + half cloud color
-                field[row, col] = field[row, col] * (1.0 - coverage * 0.9) + cloud_rgb
+    # Vectorized operation (NO LOOPS)
+    mask_inv = 1.0 - cloud_mask
+    field[:, :, 0] = field[:, :, 0] * mask_inv + cloud_r * cloud_mask
+    field[:, :, 1] = field[:, :, 1] * mask_inv + cloud_g * cloud_mask
+    field[:, :, 2] = field[:, :, 2] * mask_inv + cloud_b * cloud_mask
 
 
 class AllSkyRenderer:
@@ -178,12 +164,8 @@ class AllSkyRenderer:
         self._qe       = camera_spec.quantum_efficiency
         
         # Cloud layer for procedural clouds (Sprint 14b)
-        self.cloud_layer = CloudLayer(
-            seed=42,
-            wind_speed=5.0,
-            wind_direction=270.0,  # West wind
-            cloud_base_coverage=0.3
-        )
+        self._cloud = CloudLayer(seed=42)
+        self._sim_time_s = 0.0
 
     def render(self, jd: float, universe,
                exposure_s: float = 1.0,
@@ -206,11 +188,16 @@ class AllSkyRenderer:
         cx = cy = S / 2.0
         radius  = S / 2.0 - 1.5
         
-        # Update cloud layer with current time (Sprint 14b)
-        self.cloud_layer.step(exposure_s)
-
         # ── Background (sky colour + spatial noise + airglow) ──────────
         field = build_allsky_background(S, atm_state, exposure_s, gain_sw=gain_sw)
+
+        # Accumulate simulated time
+        self._sim_time_s += exposure_s
+
+        # Update cloud mask
+        transparency = getattr(atm_state, 'transparency', 1.0) if atm_state else 1.0
+        current_size = field.shape[0]  # Get current render size from field
+        self._cloud.update(transparency=transparency, sim_time_s=self._sim_time_s, current_size=field.shape[0])
 
         # ── Atmospheric twilight glow (direzionale, prima delle stelle) ─
         solar_alt = atm_state.solar_alt_deg if atm_state else -90.0
@@ -258,7 +245,8 @@ class AllSkyRenderer:
                     pass
 
         # ── Cloud overlay (Sprint 14b) ────────────────────────────────────
-        _apply_cloud_overlay(field, self.cloud_layer, cx, cy, radius)
+        if self._cloud.coverage > 0.01:
+            _apply_cloud_overlay(field, self._cloud.mask)
 
         return field
 
