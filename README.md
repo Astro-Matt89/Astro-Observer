@@ -218,6 +218,54 @@ Per ciascuno:
 - [ ] Forecast meteo in-game — dati simulati per pianificare sessioni
 - [ ] Rugiada/ghiaccio su ottica — riduce throughput, richiede riscaldamento
 
+### Sprint 14.5 — UI Foundation Refactor
+
+**Goal:** Reorganize UI architecture with proper navigation, content management, and observable filtering.
+
+**New screens:**
+- [ ] Main Menu (CAREER / EXPLORE / SETTINGS / QUIT)
+- [ ] Content Manager (catalogs + equipment library + graphics settings)
+
+**New components:**
+- [ ] NavigationManager — centralized screen stack + global hotkeys (H=home, ESC=back)
+- [ ] WeatherWidget — persistent widget (top-right) visible in all screens, click to expand forecast
+- [ ] ObservablePanel — "Observable Now" filterable list (alt > 30°, mag < X, etc.)
+
+**Screen updates:**
+- [ ] Observatory — add WeatherWidget, navigation hotkeys
+- [ ] SkyChart — add ObservablePanel (hotkey O), WeatherWidget, quick-switch to Imaging (hotkey I)
+- [ ] Imaging — tabs (Live/Setup/Capture/Process), WeatherWidget, quick-switch to SkyChart (hotkey S)
+- [ ] Equipment — mode switch: Career (shop + owned) vs Explore (sandbox all equipment)
+
+**Navigation flow:**
+```
+MAIN_MENU
+  ├→ CAREER → (future Sprint 17 tasks) → OBSERVATORY
+  ├→ EXPLORE → OBSERVATORY (direct, sandbox mode)
+  └→ SETTINGS → CONTENT_MANAGER
+      ├→ Catalogs tab (enable/disable Gaia, Messier, NGC, MPCORB, etc.)
+      ├→ Equipment Library tab (view all telescopes/cameras specs)
+      └→ Graphics tab (VFX toggles, resolution)
+
+OBSERVATORY (hub)
+  ├→ SKYCHART ⟷ IMAGING (hotkey I/S quick-switch)
+  ├→ EQUIPMENT (Career: shop + owned | Explore: sandbox)
+  └→ STATS (future)
+
+Global hotkeys:
+  H = Home (return to OBSERVATORY)
+  ESC = Back (pop navigation stack)
+  O = Observable Now panel (in SkyChart/Imaging)
+```
+
+**Files:**
+- NEW: `ui_new/navigation_manager.py`, `ui_new/screen_main_menu.py`, `ui_new/screen_content_manager.py`
+- MODIFY: `ui_new/components.py` (WeatherWidget + ObservablePanel), `ui_new/screen_observatory.py`, `ui_new/screen_skychart.py`, `ui_new/screen_imaging.py`, `ui_new/screen_equipment.py`, `main_app.py`
+
+**Effort:** ~870 lines total (300 new components, 390 new screens, 180 refactor).
+
+---
+
 ### Sprint 15 — VFX e Fluidità (2 layer)
 
 **Filosofia:** Separare fisica (accuratezza, pesante, 1–2s per frame) da estetica (bellezza, leggera, 15fps real-time). Il layer fisico genera frame accurati ma lenti. Il layer VFX li interpola/decora a 15fps per fluidità visiva.
