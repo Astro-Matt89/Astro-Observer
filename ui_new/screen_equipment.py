@@ -30,7 +30,14 @@ class EquipmentScreen(BaseScreen):
     def __init__(self, state_manager):
         super().__init__("EQUIPMENT")
         self.state_manager = state_manager
-        
+
+        # Mode detection: Career vs Explore
+        if self.state_manager:
+            career_mode = getattr(self.state_manager, 'career_mode', False)
+            self._mode = 'CAREER' if career_mode else 'EXPLORE'
+        else:
+            self._mode = 'EXPLORE'
+
         # Current selection
         self.category = "TELESCOPE"  # TELESCOPE, CAMERA, FILTER, ALLSKY
         self.selected_telescope_id = None
@@ -329,6 +336,21 @@ class EquipmentScreen(BaseScreen):
     
     def render(self, surface: pygame.Surface):
         """Render equipment manager"""
+        if self._mode == 'CAREER':
+            self._render_career_mode(surface)
+        else:
+            self._render_explore_mode(surface)
+
+    def _render_career_mode(self, surface: pygame.Surface):
+        """Render equipment manager in career mode."""
+        self._render_equipment_ui(surface)
+
+    def _render_explore_mode(self, surface: pygame.Surface):
+        """Render equipment manager in explore (sandbox) mode."""
+        self._render_equipment_ui(surface)
+
+    def _render_equipment_ui(self, surface: pygame.Surface):
+        """Shared equipment rendering logic."""
         W, H = surface.get_width(), surface.get_height()
         
         # Header
