@@ -9,7 +9,7 @@ import pygame
 from datetime import datetime, timezone
 from typing import Optional
 from .base_screen import BaseScreen
-from .components import Button, Panel, Label
+from .components import Button, Panel, Label, WeatherWidget
 
 
 class ObservatoryScreen(BaseScreen):
@@ -45,6 +45,7 @@ class ObservatoryScreen(BaseScreen):
         from core.time_controller import TimeController
         self.weather_system = WeatherSystem(base_seeing=2.5, seed=42)
         self._tc = TimeController()
+        self._weather_widget = WeatherWidget(x=0, y=10, weather_system=self.weather_system)
     
     def _create_buttons(self):
         """Create main navigation buttons"""
@@ -154,6 +155,10 @@ class ObservatoryScreen(BaseScreen):
         
         # Handle events
         for event in events:
+            # Weather widget
+            if self._weather_widget.handle_event(event):
+                continue
+
             # Global keys
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
@@ -198,6 +203,7 @@ class ObservatoryScreen(BaseScreen):
         self.current_time = datetime.now(timezone.utc)
         # Update time controller - MODIFIED: changed from tick() to step()
         self._tc.step(dt)
+        self._weather_widget.update(self._tc.jd)
     
     def _draw_weather_widget(self, surface: pygame.Surface, jd: float):
         """Draw weather conditions panel."""
@@ -365,9 +371,9 @@ class ObservatoryScreen(BaseScreen):
         self.draw_footer(surface, footer,
                         "[1] Sky Chart  [2] Imaging  [3] Catalogs  [4] Equipment  [5] Career  [F5] Save  [F9] Load  [ESC] Quit")
         
-        # Weather widget
-        jd = self._tc.jd
-        self._draw_weather_widget(surface, jd)
+        # Weather widget (top-right)
+        self._weather_widget.x = W - 90
+        self._weather_widget.render(surface)
     
     def set_target(self, target_name: str):
         """Update current target"""

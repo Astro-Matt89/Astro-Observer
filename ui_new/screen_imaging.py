@@ -214,6 +214,16 @@ class ImagingScreen(BaseScreen):
         self._btn: dict[str, Button] = {}
         self._build_btns()
 
+        # ── Navigation tabs (higher-level: LIVE / SETUP / CAPTURE / PROCESS) ─
+        self.tabs = ['LIVE', 'SETUP', 'CAPTURE', 'PROCESS']
+        self.current_tab = 0  # default to LIVE
+
+        # ── Weather widget ────────────────────────────────────────────────
+        from atmosphere.weather import WeatherSystem
+        from .components import WeatherWidget
+        self._weather = WeatherSystem(base_seeing=2.5, seed=42)
+        self._weather_widget = WeatherWidget(x=0, y=10, weather_system=self._weather)
+
     # ── Equipment ─────────────────────────────────────────────────────────────
     def _reload_if_changed(self):
         from imaging.camera import CAMERA_DATABASE
@@ -760,6 +770,7 @@ class ImagingScreen(BaseScreen):
             self._live_timer = 0.0
             if self.tab == 0:
                 self._update_live()
+        self._weather_widget.update(self._tc.jd)
 
     # ── Input ─────────────────────────────────────────────────────────────────
     def handle_input(self, events) -> Optional[str]:
@@ -770,6 +781,9 @@ class ImagingScreen(BaseScreen):
         for btn in self._btn.values(): btn.update(mp)
 
         for ev in events:
+            # Weather widget clicks
+            if self._weather_widget.handle_event(ev):
+                continue
             # Sliders (Tab 2 only)
             if self.tab == 2:
                 for sl in (self._sl_black, self._sl_white, self._sl_gamma):
@@ -784,9 +798,14 @@ class ImagingScreen(BaseScreen):
                     if r.collidepoint(ev.pos): self._set_tab(i)
             # Buttons
             for btn in self._btn.values(): btn.handle_event(ev)
-            # ESC
-            if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
-                return "OBSERVATORY"
+            # Keys
+            if ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_ESCAPE:
+                    return "OBSERVATORY"
+                elif ev.key == pygame.K_TAB:
+                    self.current_tab = (self.current_tab + 1) % len(self.tabs)
+                elif ev.key == pygame.K_s:
+                    return 'SKYCHART'
         return None
 
     # ── Render ────────────────────────────────────────────────────────────────
@@ -796,9 +815,20 @@ class ImagingScreen(BaseScreen):
         self._draw_header(surface, W, H)
         self._draw_tabbar(surface, W)
         TOP = 114
-        if   self.tab == 0: self._tab_live(surface, W, H, TOP)
-        elif self.tab == 1: self._tab_capture(surface, W, H, TOP)
-        else:               self._tab_process(surface, W, H, TOP)
+
+        # Weather widget (top-right)
+        self._weather_widget.x = W - 90
+        self._weather_widget.render(surface)
+
+        if self.tabs[self.current_tab] == 'LIVE':
+            if   self.tab == 0: self._tab_live(surface, W, H, TOP)
+            elif self.tab == 1: self._tab_capture(surface, W, H, TOP)
+            else:               self._tab_process(surface, W, H, TOP)
+        else:
+            font = pygame.font.SysFont('monospace', 11)
+            msg = f"{self.tabs[self.current_tab]} — coming soon"
+            text = font.render(msg, True, (160, 210, 160))
+            surface.blit(text, (30, TOP + 20))
         self._draw_footer(surface, W, H)
 
     # ── Header (always visible) ───────────────────────────────────────────────
