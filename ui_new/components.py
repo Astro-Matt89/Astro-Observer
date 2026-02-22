@@ -525,3 +525,291 @@ class Checkbox:
     def set_checked(self, checked: bool):
         """Set checked state"""
         self.checked = checked
+
+
+class WeatherWidget:
+    """
+    Persistent weather widget (80x40px) shown in top-right of every screen.
+
+    Usage:
+        widget = WeatherWidget(x=1200, y=10, weather_system=ws)
+        widget.update(jd=tc.jd)
+        widget.render(surface)
+    """
+
+    def __init__(self, x: int, y: int, weather_system):
+        """
+        Args:
+            x, y: top-left position (usually W-90, 10)
+            weather_system: WeatherSystem instance from atmosphere.weather
+        """
+        self.x = x
+        self.y = y
+        self._weather = weather_system
+        self._expanded = False
+        self._transparency = 1.0
+        self._seeing = 2.5
+        self._condition = "clear"
+
+    def update(self, jd: float) -> None:
+        """Update weather data for current JD."""
+        self._transparency = self._weather.transparency(jd)
+        self._seeing = self._weather.seeing(jd)
+        self._condition = self._weather.condition(jd).value
+
+    def handle_event(self, event) -> bool:
+        """
+        Handle mouse click to toggle expanded view.
+        Returns True if event was consumed.
+        """
+        import pygame
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1:
+                rect = pygame.Rect(self.x, self.y, 80, 40)
+                if rect.collidepoint(event.pos):
+                    self._expanded = not self._expanded
+                    return True
+        return False
+
+    def render(self, surface: 'pygame.Surface') -> None:
+        """Render compact or expanded widget."""
+        if self._expanded:
+            self._render_expanded(surface)
+        else:
+            self._render_compact(surface)
+
+    def _render_compact(self, surface: 'pygame.Surface') -> None:
+        """Render compact 80x40 widget."""
+        import pygame
+
+        bg = pygame.Surface((80, 40), pygame.SRCALPHA)
+        bg.fill((0, 18, 10, 210))
+        pygame.draw.rect(bg, (0, 100, 50), (0, 0, 80, 40), 1)
+        surface.blit(bg, (self.x, self.y))
+
+        ICONS = {
+            "clear": "★", "mostly_clear": "◑",
+            "partly_cloudy": "◒", "cloudy": "●", "overcast": "■"
+        }
+        icon = ICONS.get(self._condition, "?")
+
+        font = pygame.font.SysFont('monospace', 11)
+        icon_surf = font.render(icon, True, (0, 220, 100))
+        surface.blit(icon_surf, (self.x + 5, self.y + 5))
+
+        t_text = f"{self._transparency*100:.0f}%"
+        t_surf = font.render(t_text, True, (160, 210, 160))
+        surface.blit(t_surf, (self.x + 25, self.y + 5))
+
+        s_text = f"{self._seeing:.1f}\""
+        s_surf = font.render(s_text, True, (160, 210, 160))
+        surface.blit(s_surf, (self.x + 25, self.y + 22))
+
+    def _render_expanded(self, surface: 'pygame.Surface') -> None:
+        """Render expanded 200x120 widget (full forecast)."""
+        import pygame
+
+        bg = pygame.Surface((200, 120), pygame.SRCALPHA)
+        bg.fill((0, 18, 10, 230))
+        pygame.draw.rect(bg, (0, 100, 50), (0, 0, 200, 120), 1)
+        surface.blit(bg, (self.x - 120, self.y))
+
+        font = pygame.font.SysFont('monospace', 10)
+        y_offset = self.y + 10
+
+        cond_text = self._condition.replace("_", " ").upper()
+        surf = font.render(f"Condition: {cond_text}", True, (0, 220, 100))
+        surface.blit(surf, (self.x - 110, y_offset))
+        y_offset += 18
+
+        surf = font.render(f"Transparency: {self._transparency*100:.0f}%", True, (160, 210, 160))
+        surface.blit(surf, (self.x - 110, y_offset))
+        y_offset += 18
+
+        surf = font.render(f"Seeing: {self._seeing:.1f}\" FWHM", True, (160, 210, 160))
+        surface.blit(surf, (self.x - 110, y_offset))
+        y_offset += 18
+
+        if self._transparency < 0.15:
+            qual = "IMPOSSIBLE"
+            col = (200, 60, 60)
+        elif self._transparency < 0.45:
+            qual = "POOR"
+            col = (200, 150, 60)
+        elif self._transparency < 0.75:
+            qual = "ACCEPTABLE"
+            col = (180, 200, 80)
+        else:
+            qual = "GOOD"
+            col = (0, 220, 100)
+
+        surf = font.render(f"Imaging: {qual}", True, col)
+        surface.blit(surf, (self.x - 110, y_offset))
+        y_offset += 25
+
+        surf = font.render("Click to close", True, (100, 140, 100))
+        surface.blit(surf, (self.x - 110, y_offset))
+
+
+class ObservablePanel:
+    """
+    Panel showing objects observable NOW (filtered by altitude, magnitude).
+
+    Usage:
+        panel = ObservablePanel(x=10, y=100, w=300, h=500)
+        panel.update(jd=tc.jd, universe=univ, observer=obs, filters=filt)
+        panel.render(surface)
+        selected = panel.get_selected_object()  # returns SpaceObject or None
+    """
+
+    def __init__(self, x: int, y: int, w: int, h: int):
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+        self._objects: list = []
+        self._selected_idx = 0
+        self._scroll_offset = 0
+        self._visible = False
+
+    def show(self) -> None:
+        """Show panel."""
+        self._visible = True
+
+    def hide(self) -> None:
+        """Hide panel."""
+        self._visible = False
+
+    def toggle(self) -> None:
+        """Toggle panel visibility."""
+        self._visible = not self._visible
+
+    def is_visible(self) -> bool:
+        """Return True if panel is visible."""
+        return self._visible
+
+    def update(self, jd: float, universe, observer, filters: dict) -> None:
+        """
+        Update the list of observable objects.
+
+        Args:
+            jd: Julian Date
+            universe: Universe instance (has get_dso(), get_stars())
+            observer: Observer object with latitude_deg, longitude_deg
+            filters: dict with 'min_alt', 'max_mag', 'obj_type'
+        """
+        from core.celestial_math import radec_to_altaz, local_sidereal_time
+
+        min_alt = filters.get('min_alt', 30.0)
+        max_mag = filters.get('max_mag', 10.0)
+
+        lst_deg = local_sidereal_time(jd, observer.longitude_deg)
+        lat_deg = observer.latitude_deg
+
+        results = []
+
+        for obj in universe.get_dso():
+            mag = getattr(obj, 'mag', 99.0)
+            if mag is None:
+                mag = 99.0
+            if mag > max_mag:
+                continue
+            alt, az = radec_to_altaz(obj.ra_deg, obj.dec_deg, lst_deg, lat_deg)
+            if alt >= min_alt:
+                results.append({'obj': obj, 'alt': alt, 'az': az, 'mag': mag})
+
+        results.sort(key=lambda r: r['alt'], reverse=True)
+        self._objects = results
+
+        if self._selected_idx >= len(self._objects):
+            self._selected_idx = max(0, len(self._objects) - 1)
+
+    def handle_event(self, event) -> bool:
+        """
+        Handle keyboard navigation (↑↓ Enter).
+        Returns True if event was consumed.
+        """
+        if not self._visible:
+            return False
+
+        import pygame
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_UP:
+                if self._selected_idx > 0:
+                    self._selected_idx -= 1
+                    self._ensure_visible()
+                return True
+            elif event.key == pygame.K_DOWN:
+                if self._selected_idx < len(self._objects) - 1:
+                    self._selected_idx += 1
+                    self._ensure_visible()
+                return True
+            elif event.key == pygame.K_RETURN:
+                return True  # caller checks get_selected_object()
+        return False
+
+    def _ensure_visible(self) -> None:
+        """Ensure selected item is within the visible scroll window."""
+        import pygame
+        item_h = 20
+        max_visible = max(1, (self.h - 30) // item_h)
+        if self._selected_idx < self._scroll_offset:
+            self._scroll_offset = self._selected_idx
+        elif self._selected_idx >= self._scroll_offset + max_visible:
+            self._scroll_offset = self._selected_idx - max_visible + 1
+
+    def get_selected_object(self):
+        """Return the currently selected SpaceObject, or None."""
+        if 0 <= self._selected_idx < len(self._objects):
+            return self._objects[self._selected_idx]['obj']
+        return None
+
+    def render(self, surface: 'pygame.Surface') -> None:
+        """Render panel if visible."""
+        if not self._visible:
+            return
+
+        import pygame
+
+        item_h = 20
+        max_visible = max(1, (self.h - 30) // item_h)
+
+        bg = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
+        bg.fill((0, 12, 6, 220))
+        pygame.draw.rect(bg, (0, 120, 60), (0, 0, self.w, self.h), 1)
+        surface.blit(bg, (self.x, self.y))
+
+        font_title = pygame.font.SysFont('monospace', 11, bold=True)
+        font = pygame.font.SysFont('monospace', 10)
+
+        title = font_title.render(f"OBSERVABLE NOW ({len(self._objects)})", True, (0, 220, 100))
+        surface.blit(title, (self.x + 6, self.y + 6))
+        pygame.draw.line(surface, (0, 80, 40),
+                         (self.x + 2, self.y + 22),
+                         (self.x + self.w - 2, self.y + 22), 1)
+
+        for i in range(max_visible):
+            idx = self._scroll_offset + i
+            if idx >= len(self._objects):
+                break
+            entry = self._objects[idx]
+            obj = entry['obj']
+            alt = entry['alt']
+            mag = entry['mag']
+
+            y = self.y + 26 + i * item_h
+            is_selected = (idx == self._selected_idx)
+
+            if is_selected:
+                sel_rect = pygame.Rect(self.x + 1, y - 1, self.w - 2, item_h)
+                pygame.draw.rect(surface, (0, 60, 30), sel_rect)
+
+            name = getattr(obj, 'name', '???')[:18]
+            label = f"{name:<18s} {alt:>5.1f}° m{mag:>4.1f}"
+            col = (0, 220, 100) if is_selected else (140, 190, 140)
+            txt = font.render(label, True, col)
+            surface.blit(txt, (self.x + 4, y + 2))
+
+        hint_y = self.y + self.h - 16
+        hint = font.render("[↑↓] navigate  [Enter] select  [O] close", True, (80, 120, 80))
+        surface.blit(hint, (self.x + 4, hint_y))

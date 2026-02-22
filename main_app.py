@@ -27,6 +27,9 @@ from ui_new.screen_equipment import EquipmentScreen
 from ui_new.screen_career import CareerScreen
 from ui_new.screen_skychart import SkychartScreen
 from ui_new.base_screen import EmptyScreen
+from ui_new.navigation_manager import NavigationManager
+from ui_new.screen_main_menu import MainMenuScreen
+from ui_new.screen_content_manager import ContentManagerScreen
 
 # Window settings
 WIDTH, HEIGHT = 1280, 800
@@ -58,11 +61,14 @@ class ObservatoryGame:
         # Create state manager
         self.state_manager = StateManager()
         
+        # Navigation manager
+        self.nav_manager = NavigationManager(initial_screen='MAIN_MENU')
+        
         # Register screens
         self._register_screens()
         
-        # Start at Observatory Hub
-        self.state_manager.switch_to('OBSERVATORY', push_stack=False)
+        # Start at Main Menu
+        self.state_manager.switch_to('MAIN_MENU', push_stack=False)
         
         self.running = True
         print(f"\n{TITLE}")
@@ -72,6 +78,12 @@ class ObservatoryGame:
     
     def _register_screens(self):
         """Register all game screens"""
+        # Main menu
+        self.state_manager.register_screen('MAIN_MENU', MainMenuScreen(self.state_manager))
+        
+        # Settings / content manager
+        self.state_manager.register_screen('CONTENT_MANAGER', ContentManagerScreen(self.state_manager))
+        
         # Main observatory hub
         self.state_manager.register_screen('OBSERVATORY', ObservatoryScreen(self.state_manager))
         
@@ -113,6 +125,11 @@ class ObservatoryGame:
                 # Handle window resize
                 elif event.type == pygame.VIDEORESIZE:
                     self.handle_resize(event.w, event.h)
+                
+                # Global navigation hotkeys (H=home) BEFORE screen handles input
+                nav_target = self.nav_manager.handle_global_hotkeys(event)
+                if nav_target:
+                    self.state_manager.switch_to(nav_target)
             
             # Let state manager handle input
             self.state_manager.handle_input(events)

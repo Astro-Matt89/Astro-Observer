@@ -34,7 +34,8 @@ from datetime import datetime, timezone
 from typing import Optional, Tuple, List
 
 from .base_screen import BaseScreen
-from .components import Button
+from .components import Button, WeatherWidget, ObservablePanel
+from atmosphere.weather import WeatherSystem
 from core.time_controller import TimeController, SPEEDS, SPEED_LABELS
 from core.celestial_math import (
     AltAzProjection, OrthographicProjection, ALLSKY_FOV_THRESHOLD,
@@ -159,6 +160,12 @@ class SkychartScreen(BaseScreen):
         self._earth = EarthRenderer()
 
         self._create_buttons()
+
+        # Weather widget and Observable panel
+        self._weather = WeatherSystem(base_seeing=2.5, seed=42)
+        self._weather_widget = WeatherWidget(x=0, y=10, weather_system=self._weather)
+        self._observable_panel = ObservablePanel(x=10, y=100, w=300, h=600)
+        self._observable_panel.hide()
 
     # -----------------------------------------------------------------------
     # Setup
@@ -309,6 +316,19 @@ class SkychartScreen(BaseScreen):
         for btn in self._tbtn.values():    btn.update(mp)
 
         for event in events:
+            # Observable panel navigation (consumes ↑↓ Enter when visible)
+            if self._observable_panel.is_visible():
+                if self._observable_panel.handle_event(event):
+                    if event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
+                        selected = self._observable_panel.get_selected_object()
+                        if selected:
+                            self._observable_panel.hide()
+                    continue
+
+            # Weather widget clicks
+            if self._weather_widget.handle_event(event):
+                continue
+
             if event.type == pygame.KEYDOWN:
                 k = event.key
                 if   k == pygame.K_ESCAPE: return 'OBSERVATORY'
@@ -330,7 +350,8 @@ class SkychartScreen(BaseScreen):
                 elif k == pygame.K_p: self._toggle('show_planets')
                 elif k == pygame.K_t: self._goto_target()
                 elif k == pygame.K_s: self._set_as_target()
-                elif k == pygame.K_i: self._go_imaging()
+                elif k == pygame.K_i: return 'IMAGING'
+                elif k == pygame.K_o: self._observable_panel.toggle()
                 # Controlli tempo
                 elif k == pygame.K_SPACE:  self._tc.toggle_pause()
                 elif k == pygame.K_PERIOD: self._tc.speed_up()    # > più veloce
@@ -473,6 +494,20 @@ class SkychartScreen(BaseScreen):
         for body in self._minor_bodies:
             body.update_position(jd, lat, lon)
 
+        # Update weather widget
+        self._weather_widget.update(jd)
+
+        # Update observable panel if visible
+        if self._observable_panel.is_visible():
+            universe = self.state_manager.get_universe()
+            filters = {'min_alt': 30.0, 'max_mag': 10.0, 'obj_type': None}
+            self._observable_panel.update(
+                jd=jd,
+                universe=universe,
+                observer=self.observer,
+                filters=filters
+            )
+
     # -----------------------------------------------------------------------
     # Render
     # -----------------------------------------------------------------------
@@ -538,6 +573,13 @@ class SkychartScreen(BaseScreen):
             if getattr(self, attr):
                 pygame.draw.rect(surface, (0, 210, 90),
                                  btn.rect.inflate(4, 4), 2)
+
+        # Weather widget (top-right)
+        self._weather_widget.x = W - 90
+        self._weather_widget.render(surface)
+
+        # Observable panel
+        self._observable_panel.render(surface)
 
     # -----------------------------------------------------------------------
     # Draw: grid
