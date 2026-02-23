@@ -183,7 +183,7 @@ _EMISSION_NEBULAE = [
 # Texture builder
 # ═══════════════════════════════════════════════════════════════════════════
 
-def build_milky_way_texture(res_l: int = 720, res_b: int = 360,
+def build_milky_way_texture(res_l: int = 1440, res_b: int = 720,
                              seed: int = 42) -> np.ndarray:
     """
     Build a (res_b, res_l, 3) float32 texture in galactic coordinates.
@@ -202,12 +202,14 @@ def build_milky_way_texture(res_l: int = 720, res_b: int = 360,
     l_c = ((l_grid + 180.0) % 360.0) - 180.0   # centred on GC
 
     # ── 1. Band profile ───────────────────────────────────────────────────
-    # Two-component Gaussian: sharp core + extended halo
+    # Three-component Gaussian: sharp core + extended halo + diffuse stellar bg
     sigma_core = 4.0    # narrow bright core
-    sigma_halo = 14.0   # wide faint halo (zodiacal/stellar halo)
+    sigma_halo = 25.0   # wide galactic halo (Bortle 3-4 level)
+    sigma_bg   = 60.0   # very wide diffuse stellar background (sky never black)
     band_core = np.exp(-0.5 * (b_grid / sigma_core) ** 2)
-    band_halo = np.exp(-0.5 * (b_grid / sigma_halo) ** 2) * 0.15
-    band = (band_core + band_halo).astype(np.float32)
+    band_halo = np.exp(-0.5 * (b_grid / sigma_halo) ** 2) * 0.25
+    band_bg   = np.exp(-0.5 * (b_grid / sigma_bg)   ** 2) * 0.05
+    band = (band_core + band_halo + band_bg).astype(np.float32)
 
     # ── 2. Longitude brightness ───────────────────────────────────────────
     l_rad = np.radians(l_grid)
@@ -265,10 +267,14 @@ def build_milky_way_texture(res_l: int = 720, res_b: int = 360,
     # Fine-scale granularity (individual star clusters, dark globules)
     noise_fine = _fbm(l_grid * 0.35 + seed * 2.1, b_grid * 0.60 + seed * 2.1,
                        octaves=3, lacunarity=2.2, gain=0.45)
+    # Very fine noise — unresolved star cluster granularity
+    noise_vfine = _fbm(l_grid * 0.95 + seed * 3.3, b_grid * 1.60 + seed * 3.3,
+                        octaves=3, lacunarity=2.2, gain=0.42)
     texture = (1.0
                + 0.30 * noise_large
                + 0.22 * noise_med
-               + 0.14 * noise_fine)
+               + 0.22 * noise_fine
+               + 0.12 * noise_vfine)
     texture = np.clip(texture, 0.3, 1.7).astype(np.float32)
 
     # ── 7. Combine into luminance ─────────────────────────────────────────
@@ -313,11 +319,58 @@ def build_milky_way_texture(res_l: int = 720, res_b: int = 360,
         out_g += mask * bright * eg
         out_b += mask * bright * eb
 
-    # ── 10. Finalise ──────────────────────────────────────────────────────
+    # ── 10. Zodiacal light + gegenschein ─────────────────────────────────
+    # Ecliptic north pole in galactic coordinates: (l≈96.4°, b≈29.8°)
+    _enp_l_r = math.radians(96.4)
+    _enp_b_r = math.radians(29.8)
+    enp_x = math.cos(_enp_b_r) * math.cos(_enp_l_r)
+    enp_y = math.cos(_enp_b_r) * math.sin(_enp_l_r)
+    enp_z = math.sin(_enp_b_r)
+
+    # Galactic unit vectors for the texture grid
+    b_r = np.radians(b_grid)
+    l_r_zod = np.radians(l_grid)
+    vx_g = np.cos(b_r) * np.cos(l_r_zod)
+    vy_g = np.cos(b_r) * np.sin(l_r_zod)
+    vz_g = np.sin(b_r)
+
+    # Ecliptic latitude (sine = dot product with ecliptic pole)
+    sin_elat = np.clip(vx_g * enp_x + vy_g * enp_y + vz_g * enp_z, -1.0, 1.0)
+    elat_deg = np.degrees(np.arcsin(sin_elat))
+
+    # Zodiacal band: sigma ~15° in ecliptic latitude, warm yellow-white colour
+    sigma_zod = 15.0
+    zod_band = np.exp(-0.5 * (elat_deg / sigma_zod) ** 2).astype(np.float32)
+    # Brightness modulation: brighter near l=0 (galactic centre direction)
+    zod_lon_mod = (0.55 + 0.45 * np.cos(np.radians(l_grid))).astype(np.float32)
+    # Peak zodiacal brightness ~0.4× MW band peak → multiply by ~0.08 in texture units
+    zod_brightness = 0.08
+    out_r += zod_band * zod_lon_mod * zod_brightness * 1.10   # warm yellow-white
+    out_g += zod_band * zod_lon_mod * zod_brightness * 1.05
+    out_b += zod_band * zod_lon_mod * zod_brightness * 0.85
+
+    # Gegenschein: broad faint spot at anti-solar proxy (l=180° ecliptic plane crossing)
+    # Use a fixed representative position near ecliptic at l≈180°, b≈0°
+    gsch_dl = (l_grid % 360.0) - 180.0
+    gsch_db = b_grid
+    gegenschein = np.exp(-0.5 * ((gsch_dl / 12.0) ** 2 + (gsch_db / 10.0) ** 2))
+    gegenschein *= zod_band * 0.04   # faint, only visible where ecliptic is
+    out_r += gegenschein.astype(np.float32) * 1.10
+    out_g += gegenschein.astype(np.float32) * 1.05
+    out_b += gegenschein.astype(np.float32) * 0.85
+
+    # ── 11. Finalise ──────────────────────────────────────────────────────
     tex = np.stack([out_r, out_g, out_b], axis=-1).astype(np.float32)
-    # Light Gaussian blur to smooth noise edges (0.5 px at texture scale)
-    for c in range(3):
-        tex[:, :, c] = gaussian_filter(tex[:, :, c], sigma=0.7)
+
+    # Poissonian micro-variation: faint per-pixel noise to prevent smooth look
+    rng = np.random.default_rng(seed + 7)
+    lum_mean = np.mean(tex, axis=-1, keepdims=True)
+    poisson_noise = rng.uniform(-1.0, 1.0, tex.shape).astype(np.float32)
+    tex += poisson_noise * np.clip(lum_mean * 0.015, 0.0, None)
+
+    # Light Gaussian blur to smooth noise edges (reduced for more fine detail)
+    for ch in range(3):
+        tex[:, :, ch] = gaussian_filter(tex[:, :, ch], sigma=0.38)
 
     return tex
 
@@ -387,8 +440,8 @@ class MilkyWayLayer:
         self._gcp_f = gc_plane.astype(np.float32)
 
         # Build the texture map (or load from cache)
-        self._tex_res_l = 720
-        self._tex_res_b = 360
+        self._tex_res_l = 1440
+        self._tex_res_b = 720
         self._texture = self._load_or_build_texture(seed)
         # Pixel scale for coordinate → texture index conversion
         self._l_scale = self._tex_res_l / 360.0   # px per degree
