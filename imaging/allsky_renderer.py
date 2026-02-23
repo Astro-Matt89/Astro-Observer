@@ -266,8 +266,9 @@ class AllSkyRenderer:
         # Get transparency from atmospheric state
         transparency = getattr(atm_state, 'transparency', 1.0)
         
+        effective_mag_limit = mag_limit - (1.0 - transparency) * 2.5
         for star in universe.get_stars():
-            if star.mag > mag_limit:
+            if star.mag > effective_mag_limit:
                 continue
             pos = _radec_to_xy(star.ra_deg, star.dec_deg, jd,
                                self.lat, self.lon, cx, cy, radius)
