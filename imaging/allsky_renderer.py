@@ -128,6 +128,11 @@ def build_allsky_background(size: int, atm_state, exposure_s: float = 1.0,
     return np.stack([np.clip(R, 0, None), np.clip(G, 0, None), np.clip(B, 0, None)],
                     axis=-1).astype(np.float32)
 
+# MilkyWayLayer is defined in imaging/milky_way_texture.py
+# (texture-based renderer with fractal noise, dust lanes, emission nebulae)
+from imaging.milky_way_texture import MilkyWayLayer
+
+
 def _apply_cloud_overlay(field: np.ndarray, cloud_mask: np.ndarray) -> None:
     """
     Composite cloud mask onto the rendered field in-place.
@@ -166,6 +171,9 @@ class AllSkyRenderer:
         # Cloud layer for procedural clouds (Sprint 14b)
         self._cloud = CloudLayer(seed=42)
         self._sim_time_s = 0.0
+
+        # Milky Way procedural background layer
+        self._milky_way = MilkyWayLayer()
 
     def render(self, jd: float, universe,
                exposure_s: float = 1.0,
@@ -221,6 +229,11 @@ class AllSkyRenderer:
                                cx, cy, radius, exposure_s, atm_state,
                                gain_sw=gain_sw)
 
+        # ── Milky Way band (deep night only) ─────────────────────────────
+        if solar_alt < -6.0:
+            self._milky_way.render(field, jd, self.lat, self.lon,
+                                   cx, cy, radius, solar_alt_deg=solar_alt)
+
         # ── Solar disk ──────────────────────────────────────────────────
         transparency = getattr(atm_state, 'transparency', 1.0)
         if sun_body is not None:
@@ -266,8 +279,9 @@ class AllSkyRenderer:
         # Get transparency from atmospheric state
         transparency = getattr(atm_state, 'transparency', 1.0)
         
+        effective_mag_limit = mag_limit - (1.0 - transparency) * 2.5
         for star in universe.get_stars():
-            if star.mag > mag_limit:
+            if star.mag > effective_mag_limit:
                 continue
             pos = _radec_to_xy(star.ra_deg, star.dec_deg, jd,
                                self.lat, self.lon, cx, cy, radius)
@@ -286,6 +300,27 @@ class AllSkyRenderer:
             photons = (mag_to_flux(eff_mag, self._area_cm2 / math.pi * 2, exposure_s)
                        * self._qe * gm)
             photons *= transparency  # Scale by atmospheric transparency
+            # Stellar scintillation (twinkling) for bright stars
+            if star.mag < 4.0:
+                # Airmass calculation for amplitude scaling
+                airmass = 1.0 / max(math.sin(math.radians(alt)), 0.01)
+
+                # Unique frequency per star (0.5-2Hz)
+                star_hash = abs(hash(star.name)) % 1000
+                twinkle_freq = 0.5 + star_hash / 500.0
+
+                # Time-dependent phase
+                t_seconds = (jd - 2451545.0) * 86400.0
+                twinkle_phase = t_seconds * twinkle_freq * 2 * math.pi
+
+                # Amplitude increases with airmass (stronger near horizon)
+                twinkle_amp = 0.15 * (1.0 + min(airmass, 3.0) / 6.0)
+
+                # Apply sinusoidal modulation
+                brightness_modulation = 1.0 + twinkle_amp * math.sin(twinkle_phase)
+                brightness_modulation = max(0.5, min(brightness_modulation, 1.5))
+
+                photons *= brightness_modulation
             if photons < 0.3:
                 continue
             bv = getattr(star, 'bv_color', 0.6)

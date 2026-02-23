@@ -547,12 +547,14 @@ class WeatherWidget:
         self.y = y
         self._weather = weather_system
         self._expanded = False
+        self._jd = 0.0
         self._transparency = 1.0
         self._seeing = 2.5
         self._condition = "clear"
 
     def update(self, jd: float) -> None:
         """Update weather data for current JD."""
+        self._jd = jd
         self._transparency = self._weather.transparency(jd)
         self._seeing = self._weather.seeing(jd)
         self._condition = self._weather.condition(jd).value
@@ -606,12 +608,12 @@ class WeatherWidget:
         surface.blit(s_surf, (self.x + 25, self.y + 22))
 
     def _render_expanded(self, surface: 'pygame.Surface') -> None:
-        """Render expanded 200x120 widget (full forecast)."""
+        """Render expanded 200x240 widget (full forecast)."""
         import pygame
 
-        bg = pygame.Surface((200, 120), pygame.SRCALPHA)
+        bg = pygame.Surface((200, 240), pygame.SRCALPHA)
         bg.fill((0, 18, 10, 230))
-        pygame.draw.rect(bg, (0, 100, 50), (0, 0, 200, 120), 1)
+        pygame.draw.rect(bg, (0, 100, 50), (0, 0, 200, 240), 1)
         surface.blit(bg, (self.x - 120, self.y))
 
         font = pygame.font.SysFont('monospace', 10)
@@ -645,7 +647,50 @@ class WeatherWidget:
 
         surf = font.render(f"Imaging: {qual}", True, col)
         surface.blit(surf, (self.x - 110, y_offset))
-        y_offset += 25
+        y_offset += 22
+
+        # ── 7-day forecast graph ───────────────────────────────────────
+        surf = font.render("7-DAY FORECAST", True, (0, 180, 80))
+        surface.blit(surf, (self.x - 110, y_offset))
+        y_offset += 14
+
+        COND_ICONS = {
+            "clear": "\u2605", "mostly_clear": "\u25d1",
+            "partly_cloudy": "\u25d2", "cloudy": "\u25cf", "overcast": "\u25a0"
+        }
+
+        try:
+            forecast_data = self._weather.forecast(self._jd, days=7)
+        except Exception:
+            forecast_data = []
+
+        bar_max_h = 40
+        bar_w = 22
+        col_gap = 4
+        graph_x = self.x - 110
+        bar_bottom = y_offset + bar_max_h
+
+        for i, night in enumerate(forecast_data[:7]):
+            bx = graph_x + i * (bar_w + col_gap)
+            transp = getattr(night, 'transparency', 1.0)
+            bar_h = max(2, int(transp * bar_max_h))
+
+            # Colour the bar green→red based on transparency
+            r = int((1.0 - transp) * 200)
+            g = int(transp * 180)
+            bar_col = (r, g, 40)
+            bar_rect = pygame.Rect(bx, bar_bottom - bar_h, bar_w, bar_h)
+            pygame.draw.rect(surface, bar_col, bar_rect)
+            pygame.draw.rect(surface, (0, 80, 40), bar_rect, 1)
+
+            # Condition icon
+            cond_val = getattr(night, 'condition', None)
+            cond_key = cond_val.value if cond_val is not None else "clear"
+            icon = COND_ICONS.get(cond_key, "?")
+            icon_surf = font.render(icon, True, (0, 200, 100))
+            surface.blit(icon_surf, (bx + 5, bar_bottom + 2))
+
+        y_offset = bar_bottom + 18
 
         surf = font.render("Click to close", True, (100, 140, 100))
         surface.blit(surf, (self.x - 110, y_offset))
