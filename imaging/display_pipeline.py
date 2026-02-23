@@ -148,6 +148,45 @@ def add_grain(img, strength=0.018, dark_boost=2.0, seed=0):
     return np.clip(img+noise*mask, 0, 1).astype(np.float32)
 
 
+# Standard 8×8 Bayer ordered-dithering threshold matrix (values 0–63).
+# Tiling this over an image and thresholding against it produces the classic
+# retro VGA ordered-dither look without random noise.
+BAYER_8x8 = np.array([
+    [ 0, 32,  8, 40,  2, 34, 10, 42],
+    [48, 16, 56, 24, 50, 18, 58, 26],
+    [12, 44,  4, 36, 14, 46,  6, 38],
+    [60, 28, 52, 20, 62, 30, 54, 22],
+    [ 3, 35, 11, 43,  1, 33,  9, 41],
+    [51, 19, 59, 27, 49, 17, 57, 25],
+    [15, 47,  7, 39, 13, 45,  5, 37],
+    [63, 31, 55, 23, 61, 29, 53, 21],
+], dtype=np.float32) / 64.0   # normalised to [0, 1)
+
+
+def apply_bayer_dither(img, strength=0.018, dark_boost=2.0):
+    """
+    Apply 8×8 Bayer ordered dithering as a structured film-grain substitute.
+
+    The Bayer threshold matrix is tiled over the image and scaled by *strength*
+    (and a darkness boost to emphasise shadow detail), then added to the image.
+    This gives the deterministic, retro VGA pattern instead of random noise.
+    """
+    H, W = img.shape[:2]
+    # Tile the 8×8 matrix to cover the full image
+    tile_y = (H + 7) // 8
+    tile_x = (W + 7) // 8
+    bayer = np.tile(BAYER_8x8, (tile_y, tile_x))[:H, :W]   # (H, W)
+
+    lum = (img[:,:,0]*0.299+img[:,:,1]*0.587+img[:,:,2]*0.114) if img.ndim==3 else img
+    mask = (1.0 + dark_boost*(1.0-lum))
+    # Centre the dither pattern around zero so it adds/subtracts symmetrically
+    dither = (bayer - 0.5) * strength
+    if img.ndim == 3:
+        dither = dither[:, :, np.newaxis]
+        mask   = mask[:, :, np.newaxis]
+    return np.clip(img + dither * mask, 0, 1).astype(np.float32)
+
+
 def color_grade(img, warmth=0.0, teal_shadows=0.3, saturation=1.15, contrast=1.05):
     if img.ndim != 3: return img
     out = np.clip((img-0.5)*contrast+0.5, 0, 1)
@@ -226,14 +265,9 @@ class DisplayPipeline:
 
         self._spike_style = "cross" if telescope_type == "refractor" else "diagonal"
         self._vignette    = VignetteMap(render_w, render_h, vignette_strength)
-        self._grain_seed  = 0
 
-    def _fx(self, img, advance_grain: bool = True):
-        """Apply visual effects pipeline.
-        advance_grain=True (default): increment grain seed after use,
-        so each NEW image gets different grain.
-        advance_grain=False: reuse same seed (frozen frame — cached display).
-        """
+    def _fx(self, img):
+        """Apply visual effects pipeline."""
         if self.bloom_on:  img = add_bloom(img, strength=self.bloom_strength)
         if self.spikes_on: img = add_spikes(img, spike_len=self.spike_len,
                                              strength=self.spike_strength,
@@ -242,9 +276,7 @@ class DisplayPipeline:
         if self.chrom_on and img.ndim==3:
             img = add_chrom(img, shift_px=self.chrom_shift)
         if self.grain_on:
-            img = add_grain(img, strength=self.grain_strength, seed=self._grain_seed)
-            if advance_grain:
-                self._grain_seed = (self._grain_seed + 1) % 100000
+            img = apply_bayer_dither(img, strength=self.grain_strength)
         if img.ndim==3:
             img = color_grade(img, warmth=self.warmth,
                               teal_shadows=self.teal_shadows,
@@ -253,13 +285,13 @@ class DisplayPipeline:
 
     def process(self, mono, black=None, white=None,
                 tint_rgb=(0.95, 0.97, 1.0)):
-        """Process new image — grain seed advances (image looks different each call)."""
+        """Process new image."""
         if black is None: black = float(np.percentile(mono, 1.0))
         if white is None: white = float(np.percentile(mono, 99.5))
         img = tone_map(mono, black, white, self.stretch)
         img = cinematic_curve(img)
         img = mono_to_rgb(img, *tint_rgb)
-        return to_surface(self._fx(img, advance_grain=True), self.display_w, self.display_h,
+        return to_surface(self._fx(img), self.display_w, self.display_h,
                            smooth=getattr(self,'_smooth_upscale',False))
 
     def process_rgb(self, *args, **kwargs):
@@ -278,7 +310,7 @@ class DisplayPipeline:
         if white is None: white = float(np.percentile(lum, 99.5))
         img = normalize_rgb(rgb, black, white, self.stretch)
         for c in range(3): img[:,:,c] = cinematic_curve(img[:,:,c])
-        return to_surface(self._fx(img, advance_grain=True), self.display_w, self.display_h,
+        return to_surface(self._fx(img), self.display_w, self.display_h,
                            smooth=getattr(self,'_smooth_upscale',False))
 
     # legacy aliases
