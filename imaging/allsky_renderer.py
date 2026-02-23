@@ -128,6 +128,205 @@ def build_allsky_background(size: int, atm_state, exposure_s: float = 1.0,
     return np.stack([np.clip(R, 0, None), np.clip(G, 0, None), np.clip(B, 0, None)],
                     axis=-1).astype(np.float32)
 
+class MilkyWayLayer:
+    """
+    Procedural Milky Way galaxy band for the allsky renderer.
+
+    The Milky Way is approximated as a bright, diffuse band centred on the
+    galactic plane.  The galactic centre is at galactic longitude l=0°,
+    latitude b=0°, which corresponds to approximately RA=266.4°, Dec=-28.9°
+    in equatorial coordinates.
+
+    For each pixel in the fish-eye image the altitude/azimuth is converted to
+    an approximate galactic latitude.  Pixels close to the galactic plane
+    receive a glow whose colour is warm orange-white (core) shading to blue-
+    white (outer disc).
+
+    Usage::
+
+        mw = MilkyWayLayer()
+        mw.render(field, jd, lat, lon, cx, cy, radius)
+    """
+
+    # Galactic centre in equatorial coordinates (J2000).
+    # Source: IAU 1958 definition (Blaauw et al. 1960, MNRAS 121, 123).
+    _GC_RA_DEG  = 266.405_100
+    _GC_DEC_DEG = -28.936_175
+    # Galactic north pole (J2000).
+    # Source: IAU 1958 definition (Blaauw et al. 1960, MNRAS 121, 123).
+    _GNP_RA_DEG  = 192.859_508
+    _GNP_DEC_DEG =  27.128_336
+
+    def __init__(self, brightness: float = 6.0, width_deg: float = 18.0):
+        """
+        Parameters
+        ----------
+        brightness:
+            Peak photon count added to the field at the galactic centre.
+        width_deg:
+            Half-width (sigma) of the Milky Way band in galactic latitude.
+        """
+        self.brightness = brightness
+        self.width_deg  = width_deg
+
+        # Pre-compute unit vectors for galactic north pole and galactic centre
+        self._gnp = self._unit(math.radians(self._GNP_DEC_DEG),
+                               math.radians(self._GNP_RA_DEG))
+        self._gc  = self._unit(math.radians(self._GC_DEC_DEG),
+                               math.radians(self._GC_RA_DEG))
+
+    @staticmethod
+    def _unit(dec_r: float, ra_r: float) -> np.ndarray:
+        return np.array([
+            math.cos(dec_r) * math.cos(ra_r),
+            math.cos(dec_r) * math.sin(ra_r),
+            math.sin(dec_r),
+        ], dtype=np.float64)
+
+    def _galactic_lat(self, ra_deg: float, dec_deg: float) -> float:
+        """Return galactic latitude in degrees for the given RA/Dec."""
+        dec_r = math.radians(dec_deg)
+        ra_r  = math.radians(ra_deg)
+        v = np.array([
+            math.cos(dec_r) * math.cos(ra_r),
+            math.cos(dec_r) * math.sin(ra_r),
+            math.sin(dec_r),
+        ], dtype=np.float64)
+        sin_b = float(np.dot(v, self._gnp))
+        sin_b = max(-1.0, min(1.0, sin_b))
+        return math.degrees(math.asin(sin_b))
+
+    def _galactic_lon(self, ra_deg: float, dec_deg: float) -> float:
+        """Return galactic longitude in degrees (0–360) for the given RA/Dec."""
+        dec_r = math.radians(dec_deg)
+        ra_r  = math.radians(ra_deg)
+        v = np.array([
+            math.cos(dec_r) * math.cos(ra_r),
+            math.cos(dec_r) * math.sin(ra_r),
+            math.sin(dec_r),
+        ], dtype=np.float64)
+        # Project onto galactic plane
+        gnp = self._gnp
+        gc  = self._gc
+        # Galactic east direction
+        ge  = np.cross(gnp, gc)
+        ge  = ge / (np.linalg.norm(ge) + 1e-15)
+        # Galactic north projected to plane direction toward GC
+        gc_plane = gc - np.dot(gc, gnp) * gnp
+        gc_plane = gc_plane / (np.linalg.norm(gc_plane) + 1e-15)
+        # Longitude measured from GC in galactic plane
+        x = float(np.dot(v, gc_plane))
+        y = float(np.dot(v, ge))
+        l = math.degrees(math.atan2(y, x)) % 360.0
+        return l
+
+    def render(self, field: np.ndarray, jd: float,
+               lat: float, lon: float,
+               cx: float, cy: float, radius: float,
+               solar_alt_deg: float = -90.0) -> None:
+        """
+        Composite the Milky Way band onto *field* in-place.
+
+        Only renders during night (solar_alt_deg < -6°).  Brightness fades
+        smoothly between -6° and -12° to avoid a harsh cut-off.
+        """
+        if solar_alt_deg > -6.0:
+            return
+
+        fade = min(1.0, (-6.0 - solar_alt_deg) / 6.0)  # 0→1 as alt drops from -6 to -12
+
+        H, W = field.shape[:2]
+        yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+        dx = xx - cx
+        dy = yy - cy
+        r_px = np.sqrt(dx * dx + dy * dy)
+        inside = r_px <= radius
+
+        # Alt/az for every inside pixel
+        alt_map = np.where(inside,
+                           90.0 * (1.0 - r_px / (radius + 1e-9)),
+                           -1.0).astype(np.float64)
+        az_map  = (np.degrees(np.arctan2(dx, -dy)) % 360.0).astype(np.float64)
+
+        # For each pixel compute galactic latitude via vectorised trig.
+        # We avoid a Python loop by pre-computing the GNP dot product vectorised.
+        lat_r = math.radians(lat)
+
+        # Convert alt/az -> equatorial unit vector (ECEF-horizon frame -> equatorial)
+        alt_r_map = np.radians(alt_map)
+        az_r_map  = np.radians(az_map)
+
+        # sin(dec) = sin(alt)sin(lat) + cos(alt)cos(lat)cos(az)
+        sin_dec = (np.sin(alt_r_map) * math.sin(lat_r) +
+                   np.cos(alt_r_map) * math.cos(lat_r) * np.cos(az_r_map))
+        sin_dec = np.clip(sin_dec, -1.0, 1.0)
+        dec_r_map = np.arcsin(sin_dec)
+        cos_dec   = np.cos(dec_r_map)
+
+        # Hour angle
+        cos_ha = np.where(
+            cos_dec > 1e-9,
+            np.clip((np.sin(alt_r_map) - math.sin(lat_r) * sin_dec) /
+                    (math.cos(lat_r) * cos_dec + 1e-15), -1.0, 1.0),
+            1.0)
+        ha_r_map = np.arccos(cos_ha)
+        ha_r_map = np.where(np.sin(az_r_map) > 0,
+                            2 * math.pi - ha_r_map, ha_r_map)
+
+        # LST
+        T    = (jd - 2451545.0) / 36525.0
+        GMST = (280.46061837 + 360.98564736629 * (jd - 2451545.0) +
+                T * T * 0.000387933) % 360.0
+        lst_r = math.radians((GMST + lon) % 360.0)
+
+        ra_r_map = (lst_r - ha_r_map) % (2 * math.pi)
+
+        # Equatorial unit vectors
+        vx = np.cos(dec_r_map) * np.cos(ra_r_map)
+        vy = np.cos(dec_r_map) * np.sin(ra_r_map)
+        vz = sin_dec
+
+        # Galactic latitude: sin(b) = v · gnp
+        gnp = self._gnp.astype(np.float32)
+        sin_b = np.clip(vx * gnp[0] + vy * gnp[1] + vz * gnp[2], -1.0, 1.0)
+        b_deg = np.degrees(np.arcsin(sin_b))   # (H, W)
+
+        # Galactic longitude for core brightness boost
+        gc = self._gc.astype(np.float32)
+        ge = np.cross(gnp, gc).astype(np.float32)
+        ge /= (np.linalg.norm(ge) + 1e-15)
+        gc_plane = (gc - np.dot(gc, gnp) * gnp).astype(np.float32)
+        gc_plane /= (np.linalg.norm(gc_plane) + 1e-15)
+
+        dot_gc = vx * gc_plane[0] + vy * gc_plane[1] + vz * gc_plane[2]
+        dot_ge = vx * ge[0]       + vy * ge[1]       + vz * ge[2]
+        l_deg  = (np.degrees(np.arctan2(dot_ge, dot_gc)) % 360.0)  # 0–360
+
+        # Gaussian band brightness along galactic latitude
+        sigma   = self.width_deg
+        band    = np.exp(-0.5 * (b_deg / sigma) ** 2).astype(np.float32)
+
+        # Core brightening: longitude within ±30° of galactic centre
+        l_centred = ((l_deg + 180.0) % 360.0) - 180.0   # -180 to 180
+        core_boost = np.exp(-0.5 * (l_centred / 30.0) ** 2).astype(np.float32)
+        intensity  = band * (1.0 + 1.5 * core_boost) * self.brightness * fade
+
+        # Mask to inside circle and above horizon
+        intensity = np.where(inside & (alt_map >= 0.5), intensity, 0.0).astype(np.float32)
+
+        # Colour: warm orange-white at core, blue-white in outer disc
+        # Core (|l| < 30°): R=1.0, G=0.85, B=0.65
+        # Disc (|l| > 90°): R=0.75, G=0.85, B=1.0
+        t_core = core_boost                        # 1 near core, 0 away
+        cr = (0.75 + 0.25 * t_core).astype(np.float32)
+        cg = np.full_like(cr, 0.85)
+        cb = (1.0  - 0.35 * t_core).astype(np.float32)
+
+        field[:, :, 0] += intensity * cr
+        field[:, :, 1] += intensity * cg
+        field[:, :, 2] += intensity * cb
+
+
 def _apply_cloud_overlay(field: np.ndarray, cloud_mask: np.ndarray) -> None:
     """
     Composite cloud mask onto the rendered field in-place.
@@ -166,6 +365,9 @@ class AllSkyRenderer:
         # Cloud layer for procedural clouds (Sprint 14b)
         self._cloud = CloudLayer(seed=42)
         self._sim_time_s = 0.0
+
+        # Milky Way procedural background layer
+        self._milky_way = MilkyWayLayer()
 
     def render(self, jd: float, universe,
                exposure_s: float = 1.0,
@@ -220,6 +422,11 @@ class AllSkyRenderer:
             self._render_stars(field, jd, universe, mag_limit,
                                cx, cy, radius, exposure_s, atm_state,
                                gain_sw=gain_sw)
+
+        # ── Milky Way band (deep night only) ─────────────────────────────
+        if solar_alt < -6.0:
+            self._milky_way.render(field, jd, self.lat, self.lon,
+                                   cx, cy, radius, solar_alt_deg=solar_alt)
 
         # ── Solar disk ──────────────────────────────────────────────────
         transparency = getattr(atm_state, 'transparency', 1.0)
