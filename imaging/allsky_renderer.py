@@ -286,6 +286,27 @@ class AllSkyRenderer:
             photons = (mag_to_flux(eff_mag, self._area_cm2 / math.pi * 2, exposure_s)
                        * self._qe * gm)
             photons *= transparency  # Scale by atmospheric transparency
+            # Stellar scintillation (twinkling) for bright stars
+            if star.mag < 4.0:
+                # Airmass calculation for amplitude scaling
+                airmass = 1.0 / max(math.sin(math.radians(alt)), 0.01)
+
+                # Unique frequency per star (0.5-2Hz)
+                star_hash = abs(hash(star.name)) % 1000
+                twinkle_freq = 0.5 + star_hash / 500.0
+
+                # Time-dependent phase
+                t_seconds = (jd - 2451545.0) * 86400.0
+                twinkle_phase = t_seconds * twinkle_freq * 2 * math.pi
+
+                # Amplitude increases with airmass (stronger near horizon)
+                twinkle_amp = 0.15 * (1.0 + min(airmass, 3.0) / 6.0)
+
+                # Apply sinusoidal modulation
+                brightness_modulation = 1.0 + twinkle_amp * math.sin(twinkle_phase)
+                brightness_modulation = max(0.5, min(brightness_modulation, 1.5))
+
+                photons *= brightness_modulation
             if photons < 0.3:
                 continue
             bv = getattr(star, 'bv_color', 0.6)
