@@ -27,10 +27,10 @@ def _sky_scale(solar_alt_deg: float) -> float:
       mezzogiorno:    ~500 ph/px (pieno)
     """
     if solar_alt_deg < -12.0:
-        return 0.055
+        return 0.065
     elif solar_alt_deg < 0.0:
         t = (solar_alt_deg + 12.0) / 12.0
-        return 0.055 * (1 - t) + 0.008 * t
+        return 0.065 * (1 - t) + 0.008 * t
     elif solar_alt_deg < 15.0:
         t = solar_alt_deg / 15.0
         return 0.008 * (1 - t) + 0.001 * t
@@ -115,7 +115,7 @@ def build_allsky_background(size: int, atm_state, exposure_s: float = 1.0,
 
     # Airglow band (only at deep night)
     if solar_alt < -18.0:
-        airglow = np.exp(-((r_norm - 0.89) / 0.06) ** 2) * 0.4
+        airglow = np.exp(-((r_norm - 0.89) / 0.08) ** 2) * 0.55
     else:
         airglow = np.zeros((H, W), np.float32)
 
