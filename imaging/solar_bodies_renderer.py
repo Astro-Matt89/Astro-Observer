@@ -281,7 +281,8 @@ def render_planet(field, body, cx, cy, radius, exposure_s=1.0):
                            ) else getattr(body, 'apparent_diameter_arcsec', 0.0)
     arcsec_per_px = (180.0 * 3600.0) / (2.0 * radius)
     diam_px = diam_arcsec / arcsec_per_px if arcsec_per_px > 0 else 0.0
-    disk_r  = max(diam_px / 2.0, 0.5)
+    # Cap to 2px radius: in 180° allsky FOV even the largest planets are sub-pixel
+    disk_r  = min(max(diam_px / 2.0, 0.5), 2.0)
 
     uid = getattr(body, 'uid', '').upper()
 

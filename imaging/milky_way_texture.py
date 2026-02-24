@@ -280,6 +280,9 @@ def build_milky_way_texture(res_l: int = 1440, res_b: int = 720,
     # ── 7. Combine into luminance ─────────────────────────────────────────
     luminance = (band * lon_mod + star_cloud_layer + bulge) * absorption * texture
     luminance = np.clip(luminance, 0.0, None).astype(np.float32)
+    # Minimum floor: integrated light of faint unresolved stars is never zero,
+    # even at galactic poles (b = ±90°). Prevents black patches in the sky.
+    luminance = np.maximum(luminance, 0.015)
 
     # ── 8. Colour mapping ─────────────────────────────────────────────────
     # Base colour depends on longitude (warm core → cool disc)

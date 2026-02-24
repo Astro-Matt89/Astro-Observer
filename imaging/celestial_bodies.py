@@ -202,8 +202,14 @@ def draw_sun(field: np.ndarray,
     total_ph = mag_to_flux(-26.74, _ALLSKY_AREA_CM2, exposure_s)
     total_ph *= transparency  # Scale by atmospheric transparency
 
+    # Atmospheric extinction on bloom at low altitudes (Rozenberg approximation)
+    alt_r_sun = math.radians(max(solar_alt_deg, 0.0))
+    airmass_sun = 1.0 / (math.sin(alt_r_sun) + 0.025 * math.exp(-11 * math.sin(alt_r_sun)))
+    extinction_sun = 10 ** (-0.4 * 0.20 * airmass_sun)
+
     # Bloom in unità campo (stessa scala del background e stelle)
     bloom = _bloom_from_photons((H, W), px, py, total_ph, gain_sw, solar_alt_deg)
+    bloom *= extinction_sun
 
     # Colore: bianco-giallo alto, arancione-rosso orizzonte
     col_r = 1.0 + (1.0 - alt_n) * 1.5
@@ -265,8 +271,14 @@ def draw_moon(field: np.ndarray,
     total_ph  = mag_to_flux(mag_moon, _ALLSKY_AREA_CM2, exposure_s)
     total_ph *= transparency  # Scale by atmospheric transparency
 
-    # Bloom fisico
+    # Atmospheric extinction on bloom at low altitudes (Rozenberg approximation)
+    alt_r_moon = math.radians(max(moon_alt_deg, 0.0))
+    airmass_moon = 1.0 / (math.sin(alt_r_moon) + 0.025 * math.exp(-11 * math.sin(alt_r_moon)))
+    extinction_moon = 10 ** (-0.4 * 0.20 * airmass_moon)
+
+    # Bloom fisico — also scale with phase: crescent has minimal bloom
     bloom = _bloom_from_photons((H, W), px, py, total_ph, gain_sw, moon_alt_deg)
+    bloom *= extinction_moon * (illuminated ** 0.5)
 
     # Colore lunare: grigio-bianco freddo
     field[:,:,0] += bloom * 0.78
