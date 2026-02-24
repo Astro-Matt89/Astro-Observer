@@ -21,16 +21,16 @@ def _sky_scale(solar_alt_deg: float) -> float:
     """
     Fattore scala adattivo per sky_bg_* in base all'altitudine solare.
     Calibrato perché bg_B_post-scale sia:
-      notte (<-12°):  ~5 ph/px   (deep dark)
+      notte (<-12°):  ~3-5 ph/px   (deep dark, dark grey not blue)
       civil dusk (0°): ~25 ph/px (glow visibile)
       mattino (+15°): ~140 ph/px (cielo blu)
       mezzogiorno:    ~500 ph/px (pieno)
     """
     if solar_alt_deg < -12.0:
-        return 0.065
+        return 0.040
     elif solar_alt_deg < 0.0:
         t = (solar_alt_deg + 12.0) / 12.0
-        return 0.065 * (1 - t) + 0.008 * t
+        return 0.040 * (1 - t) + 0.008 * t
     elif solar_alt_deg < 15.0:
         t = solar_alt_deg / 15.0
         return 0.008 * (1 - t) + 0.001 * t
@@ -87,12 +87,12 @@ def build_allsky_background(size: int, atm_state, exposure_s: float = 1.0,
         solar_alt  = -30.0
         solar_az_r = math.pi
         gm = _gain_mult(gain_sw)
-        bg_r = 0.10 * exposure_s * gm * transparency
-        bg_g = 0.20 * exposure_s * gm * transparency
-        bg_b = 0.60 * exposure_s * gm * transparency
+        bg_r = 0.20 * exposure_s * gm * transparency
+        bg_g = 0.25 * exposure_s * gm * transparency
+        bg_b = 0.32 * exposure_s * gm * transparency
 
-    # Airmass gradient
-    horizon_boost = 1.20 if solar_alt < -12.0 else (1.45 if solar_alt < 0.0 else 1.8)
+    # Airmass gradient — subtle at deep night, stronger at twilight/day
+    horizon_boost = 1.15 if solar_alt < -12.0 else (1.45 if solar_alt < 0.0 else 1.8)
     alt_gradient  = 1.0 + r_norm * (horizon_boost - 1.0)
 
     # Spatial noise
@@ -124,6 +124,12 @@ def build_allsky_background(size: int, atm_state, exposure_s: float = 1.0,
          + airglow * bg_g * 0.3) * inside
     B = (bg_b * alt_gradient + sun_glow * bg_b * 0.05 + sky_noise
          + airglow * bg_b * 0.15) * inside
+
+    # Photon noise — scales with sqrt(signal), mimics real camera grain
+    _rng = np.random.default_rng(42)
+    R += _rng.standard_normal(R.shape).astype(np.float32) * np.sqrt(np.maximum(R, 0.1)) * 0.15
+    G += _rng.standard_normal(G.shape).astype(np.float32) * np.sqrt(np.maximum(G, 0.1)) * 0.15
+    B += _rng.standard_normal(B.shape).astype(np.float32) * np.sqrt(np.maximum(B, 0.1)) * 0.15
 
     return np.stack([np.clip(R, 0, None), np.clip(G, 0, None), np.clip(B, 0, None)],
                     axis=-1).astype(np.float32)
