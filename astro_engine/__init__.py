@@ -33,11 +33,19 @@ airmass
 """
 
 from astro_engine.physical_sky import PhysicalSky
-from astro_engine.coordinates import compute_gmst, compute_lst, airmass
+from astro_engine.coordinates import (
+    compute_gmst,
+    compute_lst,
+    airmass,
+    angular_separation,
+    solar_position,
+)
 
 __all__ = [
     "PhysicalSky",
     "compute_gmst",
     "compute_lst",
     "airmass",
+    "angular_separation",
+    "solar_position",
 ]
