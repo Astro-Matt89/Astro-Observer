@@ -42,6 +42,8 @@ from astro_engine.sky_background import (
     sky_brightness_model,
     airglow_model,
     twilight_glow,
+    airmass_gradient,
+    sky_noise_pattern,
 )
 from imaging.milky_way_texture import MilkyWayLayer
 from atmosphere.cloud_layer import CloudLayer
@@ -228,8 +230,9 @@ class PhysicalSky:
         Diffuse sky background flux at a given (alt, az) coordinate.
 
         Returns the physical sky brightness incorporating solar altitude,
-        atmospheric transparency, airglow, and a twilight gradient in the
-        direction of the supplied azimuth.  No sensor effects are applied.
+        atmospheric transparency, airmass gradient, airglow, twilight glow,
+        and a deterministic spatial noise texture.  No sensor effects are
+        applied.
 
         Parameters
         ----------
@@ -242,7 +245,7 @@ class PhysicalSky:
         -------
         tuple[float, float, float]
             ``(flux_r, flux_g, flux_b)`` in photon-flux units (ph/px/s at
-            reference gain).
+            reference gain).  All values are non-negative.
         """
         ws = self._weather_state
         transparency = float(getattr(ws, "transparency", 1.0)) if ws else 1.0
@@ -262,11 +265,7 @@ class PhysicalSky:
         #   day (≥0°):         80% — strong limb brightening
         zenith_angle = max(0.0, 90.0 - alt_deg)
         r_norm = zenith_angle / 90.0
-        horizon_boost = (
-            1.20 if self._solar_alt_deg < -12.0 else  # deep / nautical night
-            (1.45 if self._solar_alt_deg < 0.0 else 1.80)  # twilight / day
-        )
-        alt_gradient = 1.0 + r_norm * (horizon_boost - 1.0)
+        alt_gradient = airmass_gradient(r_norm, self._solar_alt_deg)
         flux_r *= alt_gradient
         flux_g *= alt_gradient
         flux_b *= alt_gradient
@@ -286,7 +285,15 @@ class PhysicalSky:
         flux_g += ag * bg_g * 0.3
         flux_b += ag * bg_b * 0.15
 
-        return flux_r, flux_g, flux_b
+        # Spatial noise texture — scale follows blue channel (sky background
+        # reference), matching the allsky_renderer's ``noise_scale`` formula.
+        noise_scale = 0.025 * max(flux_b, 0.1)
+        noise = sky_noise_pattern(alt_deg, az_deg)
+        flux_r += noise * noise_scale * 0.4
+        flux_g += noise * noise_scale * 0.6
+        flux_b += noise * noise_scale
+
+        return max(0.0, flux_r), max(0.0, flux_g), max(0.0, flux_b)
 
     def visible_stars(
         self,

@@ -20,6 +20,10 @@ compute_lst
     LST in degrees for a Julian Date and observer longitude.
 airmass
     Airmass factor as a function of altitude (Rozenberg formula).
+angular_separation
+    Great-circle angular distance between two (alt, az) positions.
+solar_position
+    Apparent solar (alt, az) for a given Julian Date and observer location.
 """
 
 from __future__ import annotations
@@ -331,3 +335,102 @@ def airmass(alt_deg: float) -> float:
     sin_alt = math.sin(alt_r)
     denom = sin_alt + 0.025 * math.exp(-11.1 * sin_alt)
     return 1.0 / max(denom, 1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Angular separation
+# ---------------------------------------------------------------------------
+
+def angular_separation(
+    alt1_deg: float,
+    az1_deg: float,
+    alt2_deg: float,
+    az2_deg: float,
+) -> float:
+    """
+    Great-circle angular distance between two points in horizontal coordinates.
+
+    Uses the haversine formula for numerical stability at small separations.
+
+    Parameters
+    ----------
+    alt1_deg, az1_deg : float
+        Altitude and azimuth of the first point in degrees.
+    alt2_deg, az2_deg : float
+        Altitude and azimuth of the second point in degrees.
+
+    Returns
+    -------
+    float
+        Angular separation in degrees, in [0, 180].
+    """
+    alt1_r = math.radians(alt1_deg)
+    alt2_r = math.radians(alt2_deg)
+    daz_r = math.radians(az2_deg - az1_deg)
+    dalt_r = math.radians(alt2_deg - alt1_deg)
+
+    a = (math.sin(dalt_r / 2.0) ** 2
+         + math.cos(alt1_r) * math.cos(alt2_r) * math.sin(daz_r / 2.0) ** 2)
+    a = max(0.0, min(1.0, a))
+    return math.degrees(2.0 * math.asin(math.sqrt(a)))
+
+
+# ---------------------------------------------------------------------------
+# Solar position
+# ---------------------------------------------------------------------------
+
+# Obliquity of the ecliptic at J2000.0 (degrees)
+_OBLIQUITY_J2000: float = 23.43928
+
+
+def solar_position(jd: float, lat_deg: float, lon_deg: float) -> Tuple[float, float]:
+    """
+    Apparent solar altitude and azimuth for a given time and observer location.
+
+    Uses the VSOP87 low-precision algorithm (accuracy ~0.01°) extracted from
+    :meth:`~universe.orbital_body.OrbitalBody._compute_sun_position`.
+
+    Parameters
+    ----------
+    jd : float
+        Julian Date (TT ≈ UTC for visual purposes).
+    lat_deg : float
+        Observer geographic latitude in degrees (north positive).
+    lon_deg : float
+        Observer geographic longitude in degrees (east positive).
+
+    Returns
+    -------
+    tuple[float, float]
+        ``(solar_alt_deg, solar_az_deg)`` — apparent solar altitude and
+        azimuth in degrees.  Altitude is negative when the Sun is below
+        the horizon.
+    """
+    T = (jd - 2451545.0) / 36525.0
+
+    # Geometric mean longitude of the Sun (degrees)
+    L0 = (280.46646 + 36000.76983 * T) % 360.0
+    # Mean anomaly
+    M = (357.52911 + 35999.05029 * T - 0.0001537 * T * T) % 360.0
+    M_r = math.radians(M)
+    # Equation of center
+    C = ((1.914602 - 0.004817 * T - 0.000014 * T * T) * math.sin(M_r)
+         + (0.019993 - 0.000101 * T) * math.sin(2.0 * M_r)
+         + 0.000289 * math.sin(3.0 * M_r))
+    # Sun's true longitude
+    sun_lon = L0 + C
+    # Apparent longitude (aberration + nutation correction)
+    omega = (125.04 - 1934.136 * T) % 360.0
+    lam = sun_lon - 0.00569 - 0.00478 * math.sin(math.radians(omega))
+    # Obliquity with nutation correction
+    eps = _OBLIQUITY_J2000 - 0.013004 * T + 0.00000164 * T * T
+    eps_r = math.radians(eps + 0.00256 * math.cos(math.radians(omega)))
+    lam_r = math.radians(lam)
+
+    # Geocentric equatorial coordinates
+    ra_r = math.atan2(math.cos(eps_r) * math.sin(lam_r), math.cos(lam_r))
+    dec_r = math.asin(math.sin(eps_r) * math.sin(lam_r))
+    ra_deg = math.degrees(ra_r) % 360.0
+    dec_deg = math.degrees(dec_r)
+
+    return equatorial_to_altaz(ra_deg, dec_deg, lat_deg, lon_deg, jd)
