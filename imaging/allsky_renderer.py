@@ -305,14 +305,18 @@ class AllSkyRenderer:
                       cx, cy, radius, exposure_s, atm_state, gain_sw=200):
         H = W = self.render_size
         gm = _gain_mult(gain_sw)
-        
+
         # Get transparency from atmospheric state
         transparency = getattr(atm_state, 'transparency', 1.0)
-        
+
         effective_mag_limit = mag_limit - (1.0 - transparency) * 2.5
-        for star in universe.get_stars():
-            if star.mag > effective_mag_limit:
-                continue
+
+        # === Vectorized magnitude pre-filter (allsky sees full hemisphere) ===
+        stars, ra_arr, dec_arr, mag_arr, bv_arr = universe.get_star_arrays()
+        cutoff = int(np.searchsorted(mag_arr, effective_mag_limit, side='right'))
+
+        for idx in range(cutoff):
+            star = stars[idx]
             pos = _radec_to_xy(star.ra_deg, star.dec_deg, jd,
                                self.lat, self.lon, cx, cy, radius)
             if pos is None:

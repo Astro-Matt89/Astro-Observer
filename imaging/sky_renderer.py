@@ -553,24 +553,16 @@ class SkyRenderer:
         """Render stars from catalog onto field, with optional atmospheric extinction."""
         H, W = field.shape
 
-        ra_margin    = self.fov_w * 0.75
-        dec_margin   = self.fov_h * 0.75
-        dec_min      = center_dec - dec_margin
-        dec_max      = center_dec + dec_margin
-        ra_margin_adj = ra_margin / max(0.01, math.cos(math.radians(center_dec)))
+        # === Vectorized pre-filter ===
+        fov_diag = math.sqrt(self.fov_w**2 + self.fov_h**2)
+        stars, ra_arr, dec_arr, mag_arr, bv_arr = universe.get_star_arrays()
+        mask = universe.query_stars_in_fov(center_ra, center_dec, fov_diag, mag_limit)
+        indices = np.nonzero(mask)[0]
 
         n_rendered = 0
 
-        for star in universe.get_stars():
-            if star.mag > mag_limit:
-                continue
-            if star.dec_deg < dec_min or star.dec_deg > dec_max:
-                continue
-            dra = abs(star.ra_deg - center_ra)
-            if dra > 180: dra = 360 - dra
-            if dra > ra_margin_adj:
-                continue
-
+        for idx in indices:
+            star = stars[idx]
             pos = self._radec_to_pixel(star.ra_deg, star.dec_deg, center_ra, center_dec)
             if pos is None:
                 continue
@@ -581,9 +573,6 @@ class SkyRenderer:
             # Apparent magnitude after atmospheric extinction
             eff_mag = star.mag
             if atm_state is not None:
-                # Convert pixel position to approximate altitude
-                # (centre of field = target altitude; edges ±FOV/2)
-                # Simple approximation: use target altitude for all stars in field
                 ext = atm_state.extinction_at(
                     self._target_alt if hasattr(self, '_target_alt') else 45.0,
                     getattr(star, 'bv_color', 0.6)

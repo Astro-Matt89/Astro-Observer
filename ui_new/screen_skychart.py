@@ -30,6 +30,7 @@ Controls
 
 import pygame
 import math
+import numpy as np
 from datetime import datetime, timezone
 from typing import Optional, Tuple, List
 
@@ -675,50 +676,33 @@ class SkychartScreen(BaseScreen):
         """Draw stars. Returns count of visible stars."""
         universe = self.state_manager.get_universe()
         font = pygame.font.SysFont('monospace', 9)
-        
+
         # Pre-compute FOV bounds in RA/Dec for fast rejection
         # (rough bounding box — slightly oversized to avoid clipping)
         fov = self.proj.fov_deg
         center_alt = self.proj.center_alt
         center_az  = self.proj.center_az
-        
+
         # Convert center alt/az to RA/Dec for bounding box
         from core.celestial_math import altaz_to_radec
         center_ra, center_dec = altaz_to_radec(center_alt, center_az,
                                                 self.lst_deg,
                                                 self.observer.latitude_deg)
-        
-        # Bounding box: FOV/2 + margin in each direction
-        margin = fov / 2.0 + 5.0
-        dec_min = max(-90, center_dec - margin)
-        dec_max = min(+90, center_dec + margin)
-        
-        # RA wrapping: expand by margin
-        ra_margin = min(180, margin / max(0.01, math.cos(math.radians(center_dec))))
-        ra_min = (center_ra - ra_margin) % 360
-        ra_max = (center_ra + ra_margin) % 360
-        ra_wraps = ra_min > ra_max  # Crosses 0/360 boundary
-        
+
+        # === Vectorized pre-filter ===
+        stars, ra_arr, dec_arr, mag_arr, bv_arr = universe.get_star_arrays()
+        mask = universe.query_stars_in_fov(center_ra, center_dec, fov, mag_limit)
+        indices = np.nonzero(mask)[0]
+
         visible_count = 0
-        for obj in universe.get_stars():
-            if obj.mag > mag_limit: continue
-            
-            # Fast RA/Dec bounding box rejection (avoids expensive projection)
-            dec = obj.dec_deg
-            if dec < dec_min or dec > dec_max: continue
-            
-            ra = obj.ra_deg
-            if not ra_wraps:
-                if ra < ra_min or ra > ra_max: continue
-            else:
-                if ra_min < ra < ra_max: continue  # Outside wrap-around range
-            
+        for idx in indices:
+            obj = stars[idx]
             alt, az = radec_to_altaz(obj.ra_deg, obj.dec_deg,
                                       self.lst_deg, self.observer.latitude_deg)
             if alt < -2: continue
             px = self.proj.project(alt, az)
             if not px or not self.proj.is_on_screen(*px): continue
-            
+
             visible_count += 1
             r     = magnitude_to_radius(obj.mag)
             color = bv_to_rgb(obj.bv_color)
@@ -740,7 +724,7 @@ class SkychartScreen(BaseScreen):
             if px and self.proj.is_on_screen(*px):
                 pygame.draw.circle(surface, (255, 255, 0), px,
                                    magnitude_to_radius(self.selected_obj.mag)+4, 1)
-        
+
         return visible_count
 
     # -----------------------------------------------------------------------
