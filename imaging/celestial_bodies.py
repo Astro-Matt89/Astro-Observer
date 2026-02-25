@@ -202,6 +202,14 @@ def draw_sun(field: np.ndarray,
     total_ph = mag_to_flux(-26.74, _ALLSKY_AREA_CM2, exposure_s)
     total_ph *= transparency  # Scale by atmospheric transparency
 
+    # Atmospheric extinction BEFORE bloom — at low altitudes the attenuated
+    # flux feeds the bloom calculation, producing a physically correct
+    # small halo at the horizon instead of a full-brightness bloom.
+    alt_r_sun = math.radians(max(solar_alt_deg, 0.0))
+    airmass_sun = 1.0 / (math.sin(alt_r_sun) + 0.025 * math.exp(-11 * math.sin(alt_r_sun)))
+    extinction_sun = 10 ** (-0.4 * 0.20 * airmass_sun)
+    total_ph *= extinction_sun   # Attenuate BEFORE bloom
+
     # Bloom in unità campo (stessa scala del background e stelle)
     bloom = _bloom_from_photons((H, W), px, py, total_ph, gain_sw, solar_alt_deg)
 
@@ -265,8 +273,18 @@ def draw_moon(field: np.ndarray,
     total_ph  = mag_to_flux(mag_moon, _ALLSKY_AREA_CM2, exposure_s)
     total_ph *= transparency  # Scale by atmospheric transparency
 
-    # Bloom fisico
+    # Atmospheric extinction BEFORE bloom (Rozenberg approximation)
+    alt_r_moon = math.radians(max(moon_alt_deg, 0.0))
+    airmass_moon = 1.0 / (math.sin(alt_r_moon) + 0.025 * math.exp(-11 * math.sin(alt_r_moon)))
+    extinction_moon = 10 ** (-0.4 * 0.20 * airmass_moon)
+    total_ph *= extinction_moon   # Attenuate BEFORE bloom
+
+    # Bloom fisico — scale aggressively with phase:
+    # crescent (ill=0.1) → bloom × 0.03 (barely visible)
+    # quarter  (ill=0.5) → bloom × 0.35
+    # full     (ill=1.0) → bloom × 1.00
     bloom = _bloom_from_photons((H, W), px, py, total_ph, gain_sw, moon_alt_deg)
+    bloom *= (illuminated ** 1.5)
 
     # Colore lunare: grigio-bianco freddo
     field[:,:,0] += bloom * 0.78

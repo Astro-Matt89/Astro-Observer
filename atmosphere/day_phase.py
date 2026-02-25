@@ -55,7 +55,7 @@ PHASE_PROPERTIES: dict[DayPhase, PhaseProperties] = {
     DayPhase.NIGHT: PhaseProperties(
         naked_eye_limit=6.5,
         imaging_allowed=True,
-        sky_color_rgb=(0.005, 0.010, 0.025),  # quasi nero, leggero teal
+        sky_color_rgb=(0.010, 0.014, 0.018),  # grey-green (OH airglow), not blue
         label="Night",
         ui_color=(0, 40, 80),
     ),
