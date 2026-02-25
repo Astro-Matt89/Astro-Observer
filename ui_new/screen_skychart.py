@@ -52,6 +52,13 @@ from universe.orbital_body import build_solar_system
 from universe.minor_bodies import build_minor_bodies
 from universe.planet_physics import saturn_ring_inclination_B
 
+# Optional GPU rendering — graceful fallback if ModernGL is not available
+try:
+    from gpu.sky_engine import GPUSkyEngine as _GPUSkyEngine
+    _GPU_ENGINE_CLASS = _GPUSkyEngine
+except (ImportError, Exception):
+    _GPU_ENGINE_CLASS = None
+
 
 # ---------------------------------------------------------------------------
 # Constellation lines  (ra1, dec1, ra2, dec2) J2000 degrees
@@ -160,6 +167,11 @@ class SkychartScreen(BaseScreen):
         # 3D Earth renderer
         self._earth = EarthRenderer()
 
+        # GPU rendering engine (optional — graceful fallback to Pygame CPU renderer)
+        self._gpu_engine = None
+        self.gpu_enabled = False          # user-visible toggle ([G] key)
+        self._gpu_init_attempted = False  # try once; don't retry on every frame
+
         self._create_buttons()
 
         # Weather widget and Observable panel
@@ -257,6 +269,34 @@ class SkychartScreen(BaseScreen):
     def _toggle(self, attr: str):
         setattr(self, attr, not getattr(self, attr))
 
+    def _toggle_gpu(self):
+        """Toggle GPU rendering on/off. Attempts lazy init on first enable."""
+        if _GPU_ENGINE_CLASS is None:
+            print("[SkyChart] GPU toggle: ModernGL not available — CPU renderer only")
+            return
+        if not self.gpu_enabled:
+            # Try to initialise the engine the first time user enables GPU
+            if not self._gpu_init_attempted:
+                self._try_init_gpu()
+            if self._gpu_engine is not None:
+                self.gpu_enabled = True
+                print("[SkyChart] GPU rendering ENABLED")
+            else:
+                print("[SkyChart] GPU init failed — staying on CPU renderer")
+        else:
+            self.gpu_enabled = False
+            print("[SkyChart] GPU rendering DISABLED (CPU fallback)")
+
+    def _try_init_gpu(self):
+        """Attempt to create GPUSkyEngine; sets _gpu_engine or leaves it None."""
+        self._gpu_init_attempted = True
+        try:
+            self._gpu_engine = _GPU_ENGINE_CLASS()
+            print("[SkyChart] GPUSkyEngine initialised successfully")
+        except Exception as exc:
+            print(f"[SkyChart] GPUSkyEngine init failed: {exc}")
+            self._gpu_engine = None
+
     # -----------------------------------------------------------------------
     # Navigation
     # -----------------------------------------------------------------------
@@ -353,6 +393,7 @@ class SkychartScreen(BaseScreen):
                 elif k == pygame.K_s: self._set_as_target()
                 elif k == pygame.K_i: return 'IMAGING'
                 elif k == pygame.K_o: self._observable_panel.toggle()
+                elif k == pygame.K_F6: self._toggle_gpu()
                 # Controlli tempo
                 elif k == pygame.K_SPACE:  self._tc.toggle_pause()
                 elif k == pygame.K_PERIOD: self._tc.speed_up()    # > più veloce
@@ -545,7 +586,13 @@ class SkychartScreen(BaseScreen):
         if self.show_const:   self._draw_constellations(surface)
         if self.show_const and self.show_const_labels:
             self._draw_constellation_labels(surface)
-        visible_stars = self._draw_stars(surface, mag_limit)
+
+        # --- Star rendering: GPU path or CPU fallback -------------------
+        if self.gpu_enabled and self._gpu_engine is not None:
+            visible_stars = self._draw_stars_gpu(surface, mag_limit, W, H)
+        else:
+            visible_stars = self._draw_stars(surface, mag_limit)
+
         if self.show_dso:     self._draw_dso(surface)
         if self.show_planets: self._draw_planets(surface, mag_limit)
 
@@ -741,6 +788,70 @@ class SkychartScreen(BaseScreen):
                                    magnitude_to_radius(self.selected_obj.mag)+4, 1)
 
         return visible_count
+
+    def _draw_stars_gpu(self, surface: pygame.Surface, mag_limit: float,
+                        W: int, H: int) -> int:
+        """
+        GPU-accelerated star rendering via GPUSkyEngine.
+
+        The GPU engine renders stars (bloom, twinkling, atmospheric scatter)
+        at internal resolution and upscales to screen.  The result is read
+        back as a pygame.Surface and blitted onto the main surface so that
+        DSO / planet / UI overlays (drawn by Pygame) composite on top.
+
+        Falls back to CPU renderer on any GPU error.
+        Returns count of stars passed to the GPU (approximate).
+        """
+        import time as _t
+
+        universe = self.state_manager.get_universe()
+
+        # Compute equatorial view centre from alt/az
+        center_ra, center_dec = altaz_to_radec(
+            self.proj.center_alt, self.proj.center_az,
+            self.lst_deg, self.observer.latitude_deg
+        )
+
+        try:
+            # Update GPU view parameters
+            self._gpu_engine.set_view(center_ra, center_dec, self.proj.fov_deg)
+
+            # Project stars and upload to GPU
+            self._gpu_engine.render_stars(
+                universe,
+                lst_deg=self.lst_deg,
+                lat_deg=self.observer.latitude_deg,
+                mag_limit=mag_limit,
+                current_time=_t.time(),
+            )
+
+            # Run GPU pipeline → output to OpenGL default framebuffer
+            self._gpu_engine.render_frame(W, H)
+
+            # Read GPU output back to a pygame.Surface for UI compositing
+            # (OpenGL → CPU → Pygame surface, then blit)
+            import ctypes
+            gpu_pixels = (ctypes.c_uint8 * (W * H * 4))()
+            import moderngl
+            self._gpu_engine.ctx.screen.read_into(
+                gpu_pixels, components=4, alignment=1
+            )
+            gpu_surf = pygame.image.frombuffer(gpu_pixels, (W, H), 'RGBA')
+            # OpenGL framebuffer is bottom-up; flip vertically
+            gpu_surf = pygame.transform.flip(gpu_surf, False, True)
+            surface.blit(gpu_surf, (0, 0))
+
+            # Estimate visible star count from universe query
+            stars, ra_arr, dec_arr, mag_arr, bv_arr = universe.get_star_arrays()
+            mask = universe.query_stars_in_fov(center_ra, center_dec,
+                                               self.proj.fov_deg, mag_limit)
+            return int(mask.sum())
+
+        except Exception as exc:
+            # Any GPU error → fall back silently to CPU renderer
+            print(f"[SkyChart] GPU render error (falling back to CPU): {exc}")
+            self.gpu_enabled = False
+            return self._draw_stars(surface, mag_limit)
 
     # -----------------------------------------------------------------------
     # Draw: DSO
@@ -1218,8 +1329,14 @@ class SkychartScreen(BaseScreen):
         else:
             hint = (f"  [+/-/Scroll] Zoom  [Drag/Arrows] Pan  "
                     f"[G]rid [C]onst [D]SO [L]abels [H]orizon [P]lanets  "
-                    f"[T]arget [I]maging  |  {hint_time}  |  [ESC] Back")
+                    f"[T]arget [I]maging  [F6] GPU  |  {hint_time}  |  [ESC] Back")
         surface.blit(font.render(hint, True, (0, 80, 45)), (0, H-16))
+
+        # GPU status indicator
+        if _GPU_ENGINE_CLASS is not None:
+            gpu_label = "GPU: ON " if self.gpu_enabled else "GPU: off"
+            gpu_color = (0, 220, 120) if self.gpu_enabled else (80, 80, 80)
+            surface.blit(font.render(gpu_label, True, gpu_color), (W - 80, H - 16))
 
         # Cursor Alt/Az + RA/Dec
         mx, my = pygame.mouse.get_pos()

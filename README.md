@@ -4,16 +4,16 @@ Un simulatore astronomico fotorealistico in stile retrò (DOS/VGA) con fisica re
 
 ![Python](https://img.shields.io/badge/python-3.11+-green)
 ![Lines](https://img.shields.io/badge/codebase-~20k_lines-blue)
-![Status](https://img.shields.io/badge/status-sprint_13b-brightgreen)
+![Status](https://img.shields.io/badge/status-sprint_16-brightgreen)
 
 ---
 
 ## Panoramica
 
-Il gioco simula un osservatorio astronomico con fisica reale end-to-end: dal calcolo delle effemeridi planetarie (VSOP87, Meeus) alla simulazione del sensore CCD/CMOS (fotoni → elettroni → ADU), passando per un modello atmosferico completo (Rayleigh scattering, estinzione, sky glow lunare). L'estetica è volutamente retrò — palette VGA, font monospace, UI a pannelli — ma la fisica sotto è da planetario professionale.
+Il gioco simula un osservatorio astronomico con fisica reale end-to-end e **rendering GPU** opzionale: dal calcolo delle effemeridi planetarie (VSOP87, Meeus) alla simulazione del sensore CCD/CMOS (fotoni → elettroni → ADU), con pipeline GPU per stelle, bloom e scattering atmosferico via ModernGL/GLSL.
 
 **Entry point:** python main_app.py
-**Dipendenze:** pip install pygame numpy scipy
+**Dipendenze:** `pip install pygame numpy scipy` — **Opzionale per GPU:** `pip install moderngl`
 
 ---
 
@@ -21,6 +21,10 @@ Il gioco simula un osservatorio astronomico con fisica reale end-to-end: dal cal
 
 ```
 main_app.py                  # Entry point, game loop, screen router
+│
+├── gpu/                     # GPU rendering pipeline (ModernGL)
+│   ├── sky_engine.py        # GPUSkyEngine: star rendering + bloom + twinkling
+│   └── shaders.py           # Shader GLSL (scene, bloom, blur, atmosphere)
 │
 ├── ui_new/                  # Schermate principali (UI framework custom)
 │   ├── screen_skychart.py   # Carta celeste interattiva (~1600 righe)
@@ -84,7 +88,7 @@ main_app.py                  # Entry point, game loop, screen router
 
 ---
 
-## Implementato — Stato Attuale (Sprint 13b, Feb 2026)
+## Implementato — Stato Attuale (Sprint 16, Feb 2026)
 
 ### Universo 3D
 
@@ -162,6 +166,10 @@ Per ciascuno:
 - **[NEW Sprint 13b]** Minor bodies (Cerere, Vesta, asteroidi, comete) visibili come punti stellari filtrati per magnitudine
 - **[NEW Sprint 13b]** Click selection per tutti i corpi con hitbox adattivo, info panel con effemeridi real-time
 - **[NEW Sprint 13b]** Toggle [P] e pulsante PLANETS per mostrare/nascondere sistema solare
+- **[NEW Sprint 16]** GPU rendering pipeline: stelle come textures GPU con bloom real-time, twinkling shader, atmospheric scattering post-process
+- **[NEW Sprint 16]** ModernGL integration: contesto OpenGL 3.3 via Pygame, fallback automatico a rendering CPU se GPU non disponibile
+- **[NEW Sprint 16]** 60fps star rendering: 389k stelle filtrate e proiettate via numpy, upload GPU come texture float16, bloom multi-pass
+- **[NEW Sprint 16]** Toggle [F6] per GPU on/off, confronto visivo CPU vs GPU
 
 ### Imaging Screen (3 tab)
 
@@ -347,32 +355,46 @@ AllSkyRenderer.render()               VFXLayer (pygame Surface)
 - Twinkling: <1ms (alpha modulation su array pre-filtrato)
 - **Total VFX overhead: <20ms → 50fps anche con tutto attivo**
 
-### Sprint 16 — Oggetti Minori Avanzati
+### Sprint 16 — GPU Window e Primo Layer ✅ IN PROGRESS
 
-- [ ] Loader MPCORB.DAT attivo — già strutturato in MinorBodyCatalog.from_mpc_file(), serve il file e il collegamento all'apertura del telescopio attivo
-- [ ] Asteroidi NEA come eventi in-game (avvicinamenti, missioni di osservazione)
-- [ ] Comete attive con chioma e coda visibile nell'allsky e sky chart
-- [ ] Effemeridi comete da file MPC aggiornabili
-- [ ] Occultazioni — asteroide che transita davanti a una stella (evento raro)
-- [ ] Apophis 2029 come evento fisso in-game (13 aprile, passaggio <40.000 km, mag ~+3)
+- [x] GPUSkyEngine: rendering stelle via ModernGL
+- [x] Bloom multi-pass real-time (bright extract → blur → combine)
+- [x] Twinkling shader (scintillazione per-stella time-based)
+- [x] Atmospheric scattering post-process
+- [x] Fallback automatico CPU quando GPU non disponibile
+- [x] Toggle [F6] per GPU on/off
 
-### Sprint 17 — Career Mode Completo
+### Sprint 17 — Layer System Completo [PLANNED]
 
-- [ ] Missioni astronomiche strutturate (scoperta asteroidi, fotometria variabili, imaging DSO)
-- [ ] Sistema reputazione e pubblicazioni scientifiche
-- [ ] Upgrade telescopio progressivo (apertura, montatura, camera)
-- [ ] Condizioni meteo che influenzano disponibilità notti
-- [ ] Log automatico sessioni con statistiche
-- [ ] Obiettivi stagionali (congiunzioni, opposizioni, comete)
-- [ ] Sistema finanziamento osservatorio (grant, scoperte, imaging)
+- [ ] Sky background gradient layer (GPU)
+- [ ] Constellation lines layer (GPU)
+- [ ] DSO overlay layer
+- [ ] Planet rendering layer
+- [ ] Layer blending e compositing order
 
-### Sprint 18 — Spettrografia e Fotometria
+### Sprint 18 — Bloom e Twinkling in Produzione [PLANNED]
 
-- [ ] Simulazione spettro stellare da tipo spettrale
-- [ ] Fotometria differenziale (misura variazione magnitudine)
-- [ ] Curve di luce variabili (Cefeidi, RR Lyrae, eclissanti)
-- [ ] Riduzione dati spettrali
-- [ ] Astrometria — misura posizione precisa asteroidi
+- [ ] Bloom calibrato su magnitudine fisica (overflow ratio)
+- [ ] Twinkling parametrizzato da seeing e airmass
+- [ ] Diffraction spikes per stelle brillanti (shader)
+
+### Sprint 19 — Atmospheric Scattering e Palette [PLANNED]
+
+- [ ] Atmospheric scattering fisico (Rayleigh + Mie gradient)
+- [ ] Palette mapping VGA retro (dithering Bayer)
+- [ ] Horizon haze e twilight glow direzionale
+
+### Sprint 20 — Imaging Mode Effects [PLANNED]
+
+- [ ] GPU rendering per allsky camera
+- [ ] GPU rendering per deep sky imaging
+- [ ] Real-time stacking preview GPU
+
+### Sprint 21+ — Moduli C++ Performance [FUTURE]
+
+- [ ] Nebula generator C++ (pybind11) → numpy RGBA → GPU texture
+- [ ] Starfield sampler C++ → numpy → GPU
+- [ ] Milky Way renderer C++ → numpy → GPU
 
 ### Lungo Termine
 
@@ -444,6 +466,18 @@ Il mapping è luma-chroma preserving: applica log stretch sulla luminanza, prese
 
 ---
 
-*Sprint 13b completato: integrazione pianeti in sky chart e catalog browser*
+## Stack Tecnologico
+
+| Componente | Tecnologia | Note |
+|---|---|---|
+| Game loop & UI | Pygame 2.x | Finestra, input, overlay |
+| Fisica & calcoli | NumPy + SciPy | Effemeridi, proiezioni, cataloghi |
+| GPU rendering | ModernGL (OpenGL 3.3) | Stelle, bloom, post-process |
+| Shader language | GLSL 330 | Fragment shader per effetti |
+| Dipendenza GPU | Opzionale | Fallback automatico a CPU |
+
+---
+
+*Sprint 16 in progress: GPU rendering pipeline integrata nella Sky Chart*
 *Codebase: ~20.000 righe Python (esclusi backup e file obsoleti)*
 *Ultima modifica: Febbraio 2026*
