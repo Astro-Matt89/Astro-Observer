@@ -316,18 +316,31 @@ class AllSkyRenderer:
         cutoff = int(np.searchsorted(mag_arr, effective_mag_limit, side='right'))
 
         for idx in range(cutoff):
-            star = stars[idx]
-            pos = _radec_to_xy(star.ra_deg, star.dec_deg, jd,
+            if idx < len(stars):
+                star = stars[idx]
+                star_ra  = star.ra_deg
+                star_dec = star.dec_deg
+                star_mag = star.mag
+                star_name = star.name
+                star_bv  = getattr(star, 'bv_color', 0.6)
+            else:
+                # Bulk star — use array data
+                star_ra  = ra_arr[idx]
+                star_dec = dec_arr[idx]
+                star_mag = mag_arr[idx]
+                star_name = ""
+                star_bv  = bv_arr[idx]
+
+            pos = _radec_to_xy(star_ra, star_dec, jd,
                                self.lat, self.lon, cx, cy, radius)
             if pos is None:
                 continue
             px, py, alt = pos
             if not (0.5 <= px < W - 0.5 and 0.5 <= py < H - 0.5):
                 continue
-            eff_mag = star.mag
+            eff_mag = star_mag
             if atm_state is not None:
-                ext = atm_state.extinction_at(max(2.0, alt),
-                                               getattr(star, 'bv_color', 0.6))
+                ext = atm_state.extinction_at(max(2.0, alt), star_bv)
                 eff_mag += ext
                 if eff_mag > mag_limit + 0.3:
                     continue
@@ -335,12 +348,12 @@ class AllSkyRenderer:
                        * self._qe * gm)
             photons *= transparency  # Scale by atmospheric transparency
             # Stellar scintillation (twinkling) for bright stars
-            if star.mag < 4.0:
+            if star_mag < 4.0 and star_name:
                 # Airmass calculation for amplitude scaling
                 airmass = 1.0 / max(math.sin(math.radians(alt)), 0.01)
 
                 # Unique frequency per star (0.5-2Hz)
-                star_hash = abs(hash(star.name)) % 1000
+                star_hash = abs(hash(star_name)) % 1000
                 twinkle_freq = 0.5 + star_hash / 500.0
 
                 # Time-dependent phase
@@ -357,7 +370,7 @@ class AllSkyRenderer:
                 photons *= brightness_modulation
             if photons < 0.3:
                 continue
-            bv = getattr(star, 'bv_color', 0.6)
+            bv = star_bv
             rc, gc, bc = bv_to_rgb(bv)
             ix = int(round(px)); iy = int(round(py))
             if eff_mag < 0.0:

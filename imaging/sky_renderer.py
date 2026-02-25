@@ -562,8 +562,20 @@ class SkyRenderer:
         n_rendered = 0
 
         for idx in indices:
-            star = stars[idx]
-            pos = self._radec_to_pixel(star.ra_deg, star.dec_deg, center_ra, center_dec)
+            if idx < len(stars):
+                star = stars[idx]
+                star_ra  = star.ra_deg
+                star_dec = star.dec_deg
+                star_mag = star.mag
+                star_bv  = getattr(star, 'bv_color', 0.6)
+            else:
+                # Bulk star — use array data
+                star_ra  = ra_arr[idx]
+                star_dec = dec_arr[idx]
+                star_mag = mag_arr[idx]
+                star_bv  = bv_arr[idx]
+
+            pos = self._radec_to_pixel(star_ra, star_dec, center_ra, center_dec)
             if pos is None:
                 continue
             px, py = pos
@@ -571,11 +583,11 @@ class SkyRenderer:
                 continue
 
             # Apparent magnitude after atmospheric extinction
-            eff_mag = star.mag
+            eff_mag = star_mag
             if atm_state is not None:
                 ext = atm_state.extinction_at(
                     self._target_alt if hasattr(self, '_target_alt') else 45.0,
-                    getattr(star, 'bv_color', 0.6)
+                    star_bv
                 )
                 eff_mag += ext
                 if eff_mag > mag_limit + 1.0:

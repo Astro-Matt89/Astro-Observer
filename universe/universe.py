@@ -53,7 +53,22 @@ class Universe:
         self._star_dec: np.ndarray = np.empty(0, dtype=np.float64)
         self._star_mag: np.ndarray = np.empty(0, dtype=np.float32)
         self._star_bv:  np.ndarray = np.empty(0, dtype=np.float32)
-        
+
+        # Bulk star arrays — Level 2 (numpy only, no SpaceObject)
+        # Loaded from extended catalogs (Gaia mag<15+)
+        # These stars appear in rendering but cannot be selected/labeled
+        self._bulk_star_ra:  np.ndarray = np.empty(0, dtype=np.float64)
+        self._bulk_star_dec: np.ndarray = np.empty(0, dtype=np.float64)
+        self._bulk_star_mag: np.ndarray = np.empty(0, dtype=np.float32)
+        self._bulk_star_bv:  np.ndarray = np.empty(0, dtype=np.float32)
+        self._bulk_dirty: bool = False  # True when merged arrays need rebuild
+        # Merged arrays cache (Level 1 + Level 2, sorted by mag)
+        self._merged_ra:  np.ndarray = np.empty(0, dtype=np.float64)
+        self._merged_dec: np.ndarray = np.empty(0, dtype=np.float64)
+        self._merged_mag: np.ndarray = np.empty(0, dtype=np.float32)
+        self._merged_bv:  np.ndarray = np.empty(0, dtype=np.float32)
+        self._merged_n_named: int = 0  # count of Level 1 (named) stars in merged arrays
+
         # Procedural LOD system (disabled by default for now)
         self.enable_procedural = enable_procedural
         self.lod_manager = None
@@ -158,6 +173,10 @@ class Universe:
 
         self._dirty = False
 
+        # If bulk stars exist, merged arrays need rebuild too
+        if len(self._bulk_star_mag) > 0:
+            self._bulk_dirty = True
+
     # -----------------------------------------------------------------------
     # Queries
     # -----------------------------------------------------------------------
@@ -176,25 +195,30 @@ class Universe:
         """
         Returns (star_objects, ra, dec, mag, bv) — all pre-sorted by magnitude.
 
-        star_objects: List[SpaceObject] sorted by mag (for name/uid lookups)
+        star_objects: List[SpaceObject] — Level 1 named stars only (sorted by mag).
+                      Length may be LESS than the arrays if bulk stars are loaded.
+                      Indices 0..len(star_objects)-1 in the arrays correspond to
+                      named stars. Indices beyond that are bulk (unnamed) stars.
+                      NOTE: When bulk stars are loaded, the arrays are re-sorted
+                      by magnitude across both levels, so array index != star_objects index.
         ra, dec: np.ndarray float64 (degrees)
         mag: np.ndarray float32
         bv: np.ndarray float32
-
-        Usage for vectorized filtering::
-
-            stars, ra, dec, mag, bv = universe.get_star_arrays()
-            mask = mag <= 6.5          # vectorized — instant for 389k
-            visible_ra  = ra[mask]
-            visible_dec = dec[mask]
         """
         self._rebuild_cache()
-        return self._stars, self._star_ra, self._star_dec, self._star_mag, self._star_bv
+        if self._bulk_dirty or (len(self._bulk_star_mag) > 0 and len(self._merged_mag) == 0):
+            self._rebuild_merged_arrays()
+
+        if len(self._bulk_star_mag) > 0:
+            return self._stars, self._merged_ra, self._merged_dec, self._merged_mag, self._merged_bv
+        else:
+            return self._stars, self._star_ra, self._star_dec, self._star_mag, self._star_bv
 
     def query_stars_in_fov(self, center_ra: float, center_dec: float,
                             fov_deg: float, mag_limit: float) -> np.ndarray:
         """
         Fast vectorized query: returns boolean mask of stars within FOV and mag limit.
+        Works with unified arrays (Level 1 + Level 2 when bulk stars are loaded).
 
         Returns:
             np.ndarray[bool] — mask aligned with get_star_arrays() output.
@@ -206,20 +230,33 @@ class Universe:
             visible_ra = ra[mask]
         """
         self._rebuild_cache()
-        n = len(self._star_mag)
+        if self._bulk_dirty or (len(self._bulk_star_mag) > 0 and len(self._merged_mag) == 0):
+            self._rebuild_merged_arrays()
+
+        # Use merged arrays if bulk stars present, otherwise Level 1 only
+        if len(self._bulk_star_mag) > 0:
+            star_mag = self._merged_mag
+            star_ra  = self._merged_ra
+            star_dec = self._merged_dec
+        else:
+            star_mag = self._star_mag
+            star_ra  = self._star_ra
+            star_dec = self._star_dec
+
+        n = len(star_mag)
         if n == 0:
             return np.empty(0, dtype=bool)
 
         # Magnitude filter — exploit pre-sort with binary search
-        cutoff = int(np.searchsorted(self._star_mag, mag_limit, side='right'))
+        cutoff = int(np.searchsorted(star_mag, mag_limit, side='right'))
 
         mask = np.zeros(n, dtype=bool)
         if cutoff == 0:
             return mask
 
         # Spatial filter on the magnitude-passing subset only
-        ra_sub  = self._star_ra[:cutoff]
-        dec_sub = self._star_dec[:cutoff]
+        ra_sub  = star_ra[:cutoff]
+        dec_sub = star_dec[:cutoff]
 
         half_fov = fov_deg / 2.0 + 2.0   # small margin to avoid clipping
 
@@ -233,6 +270,170 @@ class Universe:
 
         mask[:cutoff] = dec_ok & ra_ok
         return mask
+
+    def load_bulk_stars(self, npz_path: str, mag_limit: float = 15.0) -> int:
+        """
+        Load millions of faint stars directly as numpy arrays.
+        No SpaceObject overhead — pure numeric data for rendering only.
+
+        These stars:
+          ✓ Appear in SkyChart / AllSky / Imaging (as dots/points)
+          ✗ Cannot be selected, labeled, or shown in info panel
+          ✗ Not in Universe._objects dict
+
+        Args:
+            npz_path: Path to NPZ file with keys: ra_deg, dec_deg, mag, bv (or bp_rp)
+            mag_limit: Maximum magnitude to load (default 15.0)
+
+        Returns:
+            Number of bulk stars loaded
+
+        NPZ format expected:
+            ra_deg: float64 array (degrees, J2000)
+            dec_deg: float64 array (degrees, J2000)
+            mag: float32 array (apparent visual magnitude, or phot_g_mean_mag)
+            bp_rp: float32 array (optional, Gaia color — converted to B-V via /1.3)
+            bv: float32 array (optional, B-V color index — used if bp_rp not present)
+        """
+        from pathlib import Path
+
+        path = Path(npz_path)
+        if not path.exists():
+            print(f"Bulk catalog not found: {npz_path}")
+            return 0
+
+        print(f"Loading bulk star catalog: {path.name} ({path.stat().st_size / 1024 / 1024:.1f} MB)...")
+
+        data = np.load(npz_path)
+
+        # Extract arrays (flexible key names)
+        ra  = data.get('ra_deg', data.get('ra'))
+        dec = data.get('dec_deg', data.get('dec'))
+        mag = data.get('mag', data.get('phot_g_mean_mag', data.get('mag_g', data.get('gmag'))))
+
+        if ra is None or dec is None or mag is None:
+            print(f"  Error: Missing required fields. Available: {list(data.keys())}")
+            print(f"  Need: ra_deg/ra, dec_deg/dec, mag/phot_g_mean_mag")
+            return 0
+
+        # B-V color: from bp_rp (Gaia) or bv, or default
+        bp_rp = data.get('bp_rp', data.get('bprp'))
+        bv = data.get('bv', data.get('b_v'))
+        if bp_rp is not None:
+            bv_arr = (bp_rp / 1.3).astype(np.float32)
+        elif bv is not None:
+            bv_arr = bv.astype(np.float32)
+        else:
+            bv_arr = np.full(len(ra), 0.6, dtype=np.float32)
+
+        # Filter by magnitude
+        mask = mag < mag_limit
+        # Also filter NaN
+        mask &= np.isfinite(ra) & np.isfinite(dec) & np.isfinite(mag)
+
+        ra_filtered  = ra[mask].astype(np.float64)
+        dec_filtered = dec[mask].astype(np.float64)
+        mag_filtered = mag[mask].astype(np.float32)
+        bv_filtered  = bv_arr[mask]
+        # Replace NaN in bv with 0.6 (solar)
+        bv_filtered = np.where(np.isfinite(bv_filtered), bv_filtered, 0.6)
+
+        n_raw = int(mask.sum())
+        print(f"  Filtered to mag<{mag_limit}: {n_raw:,} stars")
+
+        # Deduplicate against Level 1 stars
+        # (remove bulk stars that are within 0.003° = 10 arcsec of a named star)
+        self._rebuild_cache()
+        if len(self._star_ra) > 0:
+            n_before = len(ra_filtered)
+            keep = self._deduplicate_bulk(ra_filtered, dec_filtered,
+                                           self._star_ra, self._star_dec,
+                                           radius_deg=0.003)
+            ra_filtered  = ra_filtered[keep]
+            dec_filtered = dec_filtered[keep]
+            mag_filtered = mag_filtered[keep]
+            bv_filtered  = bv_filtered[keep]
+            n_dedup = n_before - len(ra_filtered)
+            print(f"  Deduplicated: {n_dedup:,} removed (within 10\" of named stars)")
+
+        # Sort by magnitude (brightest first, consistent with Level 1)
+        order = np.argsort(mag_filtered)
+        self._bulk_star_ra  = ra_filtered[order]
+        self._bulk_star_dec = dec_filtered[order]
+        self._bulk_star_mag = mag_filtered[order]
+        self._bulk_star_bv  = bv_filtered[order]
+        self._bulk_dirty = True
+
+        print(f"  Bulk stars loaded: {len(self._bulk_star_mag):,}")
+        return len(self._bulk_star_mag)
+
+    @staticmethod
+    def _deduplicate_bulk(bulk_ra: np.ndarray, bulk_dec: np.ndarray,
+                           named_ra: np.ndarray, named_dec: np.ndarray,
+                           radius_deg: float = 0.003) -> np.ndarray:
+        """
+        Return boolean mask of bulk stars that are NOT duplicates of named stars.
+        Uses integer-degree bucketing for O(N+M) approximate matching.
+        """
+        # Build bucket set from named stars (and neighboring buckets)
+        named_buckets = set()
+        for i in range(len(named_ra)):
+            ra_b  = int(named_ra[i])
+            dec_b = int(named_dec[i])
+            for dra in (-1, 0, 1):
+                for ddec in (-1, 0, 1):
+                    named_buckets.add(((ra_b + dra) % 360, dec_b + ddec))
+
+        keep = np.ones(len(bulk_ra), dtype=bool)
+
+        # For each bulk star, check if any named star is within radius
+        for i in range(len(bulk_ra)):
+            bucket = (int(bulk_ra[i]) % 360, int(bulk_dec[i]))
+            if bucket not in named_buckets:
+                continue  # No named stars nearby, definitely keep
+
+            # Fine check: compute actual distance to all named stars in nearby buckets
+            dra  = np.abs(bulk_ra[i] - named_ra)
+            dra  = np.minimum(dra, 360.0 - dra)  # wraparound
+            ddec = np.abs(bulk_dec[i] - named_dec)
+            dist_sq = dra * dra + ddec * ddec
+            if np.any(dist_sq < radius_deg * radius_deg):
+                keep[i] = False
+
+        return keep
+
+    def _rebuild_merged_arrays(self):
+        """Rebuild unified Level 1 + Level 2 arrays, sorted by magnitude."""
+        self._rebuild_cache()
+
+        n_named = len(self._star_mag)
+        n_bulk  = len(self._bulk_star_mag)
+
+        if n_bulk == 0:
+            # No bulk stars — merged arrays are just Level 1
+            self._merged_ra  = self._star_ra
+            self._merged_dec = self._star_dec
+            self._merged_mag = self._star_mag
+            self._merged_bv  = self._star_bv
+            self._merged_n_named = n_named
+        else:
+            # Concatenate and merge-sort by magnitude
+            ra  = np.concatenate([self._star_ra,  self._bulk_star_ra])
+            dec = np.concatenate([self._star_dec, self._bulk_star_dec])
+            mag = np.concatenate([self._star_mag, self._bulk_star_mag])
+            bv  = np.concatenate([self._star_bv,  self._bulk_star_bv])
+
+            # Merge sort (both arrays already sorted → stable mergesort is optimal)
+            order = np.argsort(mag, kind='mergesort')
+            self._merged_ra  = ra[order]
+            self._merged_dec = dec[order]
+            self._merged_mag = mag[order]
+            self._merged_bv  = bv[order]
+            self._merged_n_named = n_named
+
+            print(f"  Merged arrays: {n_named:,} named + {n_bulk:,} bulk = {len(mag):,} total")
+
+        self._bulk_dirty = False
 
     def get_dso(self, include_unknown: bool = False) -> List[SpaceObject]:
         """All DSOs (non-stars), applying visibility rules"""
@@ -357,9 +558,15 @@ class Universe:
                    if o.origin == ObjectOrigin.PROCEDURAL
                    and o.discovery == DiscoveryState.CATALOGUED)
 
+    @property
+    def bulk_star_count(self) -> int:
+        """Number of Level 2 (bulk) stars loaded."""
+        return len(self._bulk_star_mag)
+
     def __repr__(self) -> str:
+        bulk = f", {self.bulk_star_count:,} bulk" if self.bulk_star_count > 0 else ""
         return (f"<Universe: {self.total_objects} objects "
-                f"({self.real_count} real, {self.procedural_count} procedural)>")
+                f"({self.real_count} real, {self.procedural_count} procedural{bulk})>")
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +579,7 @@ def build_universe() -> Universe:
     Call once at startup and pass the instance everywhere.
     """
     from .catalogue_loader import load_messier, load_ngc, load_stars
+    from pathlib import Path
 
     u = Universe()
 
@@ -379,7 +587,7 @@ def build_universe() -> Universe:
 
     stars = load_stars()
     u.add_many(stars)
-    print(f"  Stars:   {len(stars)}")
+    print(f"  Stars (named): {len(stars):,}")
 
     messier = load_messier()
     u.add_many(messier)
@@ -389,7 +597,25 @@ def build_universe() -> Universe:
     u.add_many(ngc)
     print(f"  NGC:     {len(ngc)}")
 
-    print(f"  Total:   {u.total_objects} objects")
+    # === Load bulk star catalogs if available ===
+    _project_root = Path(__file__).resolve().parent.parent
+    _data_dir = _project_root / "catalogs" / "data"
+
+    # Look for extended catalog files (loaded as bulk, not SpaceObject)
+    bulk_files = [
+        (_data_dir / "gaia_extended.npz", 15.0),   # Gaia DR3 extended (mag<15)
+        (_data_dir / "gaia_bulk.npz",     15.0),   # Alternative name
+        (_data_dir / "bulk_stars.npz",    15.0),   # Generic bulk catalog
+    ]
+
+    for bulk_path, mag_lim in bulk_files:
+        if bulk_path.exists():
+            n = u.load_bulk_stars(str(bulk_path), mag_limit=mag_lim)
+            if n > 0:
+                break  # Load only the first available bulk catalog
+
+    print(f"  Total: {u.total_objects:,} objects" +
+          (f" + {u.bulk_star_count:,} bulk stars" if u.bulk_star_count > 0 else ""))
     print(f"  Universe ready: {u}")
 
     return u
