@@ -696,24 +696,39 @@ class SkychartScreen(BaseScreen):
 
         visible_count = 0
         for idx in indices:
-            obj = stars[idx]
-            alt, az = radec_to_altaz(obj.ra_deg, obj.dec_deg,
-                                      self.lst_deg, self.observer.latitude_deg)
-            if alt < -2: continue
-            px = self.proj.project(alt, az)
-            if not px or not self.proj.is_on_screen(*px): continue
+            if idx < len(stars):
+                obj = stars[idx]
+                alt, az = radec_to_altaz(obj.ra_deg, obj.dec_deg,
+                                          self.lst_deg, self.observer.latitude_deg)
+                if alt < -2: continue
+                px = self.proj.project(alt, az)
+                if not px or not self.proj.is_on_screen(*px): continue
 
-            visible_count += 1
-            r     = magnitude_to_radius(obj.mag)
-            color = bv_to_rgb(obj.bv_color)
-            if r <= 1:
-                surface.set_at(px, color)
+                visible_count += 1
+                r     = magnitude_to_radius(obj.mag)
+                color = bv_to_rgb(obj.bv_color)
+                if r <= 1:
+                    surface.set_at(px, color)
+                else:
+                    pygame.draw.circle(surface, color, px, r)
+
+                if self.show_labels and obj.mag < 2.2 and fov < 80:
+                    surface.blit(font.render(obj.name, True, (160, 160, 120)),
+                                 (px[0]+r+2, px[1]-5))
             else:
-                pygame.draw.circle(surface, color, px, r)
-
-            if self.show_labels and obj.mag < 2.2 and fov < 80:
-                surface.blit(font.render(obj.name, True, (160, 160, 120)),
-                             (px[0]+r+2, px[1]-5))
+                # Bulk star: render as point using array data directly
+                r = magnitude_to_radius(mag_arr[idx])
+                color = bv_to_rgb(bv_arr[idx])
+                alt, az = radec_to_altaz(ra_arr[idx], dec_arr[idx],
+                                          self.lst_deg, self.observer.latitude_deg)
+                if alt < -2: continue
+                px = self.proj.project(alt, az)
+                if not px or not self.proj.is_on_screen(*px): continue
+                visible_count += 1
+                if r <= 1:
+                    surface.set_at(px, color)
+                else:
+                    pygame.draw.circle(surface, color, px, r)
 
         # Highlight selected star
         if self.selected_obj and self.selected_obj.obj_class == ObjectClass.STAR:

@@ -181,3 +181,39 @@ After loading NPZ catalogs:
 2. Check constellation rendering with more stars
 3. Enable dynamic magnitude limiting based on FOV
 4. Add proper motion for nearby stars (if available in catalog)
+
+## Bulk Star Catalogs (Level 2)
+
+For catalogs with millions of stars (mag 12–17), the game supports "bulk" loading:
+stars are loaded as pure numpy arrays without creating SpaceObject instances.
+
+### Preparing a bulk catalog
+
+Place an NPZ file in `catalogs/data/` with one of these names:
+- `gaia_extended.npz` (preferred)
+- `gaia_bulk.npz`
+- `bulk_stars.npz`
+
+Required NPZ arrays:
+- `ra_deg` (float64): Right Ascension in degrees
+- `dec_deg` (float64): Declination in degrees
+- `mag` (float32): Apparent magnitude (or `phot_g_mean_mag`)
+
+Optional:
+- `bp_rp` (float32): Gaia BP-RP color (converted to B-V via /1.3)
+- `bv` (float32): B-V color index (used if bp_rp not present)
+
+### Memory usage
+
+| Stars | RAM (bulk arrays) | Comparison |
+|---|---|---|
+| 1M | ~16 MB | vs ~500 MB as SpaceObject |
+| 5M | ~80 MB | vs ~2.5 GB as SpaceObject |
+| 30M | ~480 MB | vs impossible as SpaceObject |
+
+### Behavior
+
+- Bulk stars are automatically deduplicated against named stars (10" radius)
+- Bulk stars appear in all renderers (SkyChart, Imaging, AllSky)
+- Bulk stars CANNOT be selected, labeled, or shown in info panels
+- If no bulk NPZ is found, the game works normally with named stars only
