@@ -20,20 +20,22 @@ from atmosphere.cloud_layer import CloudLayer
 def _sky_scale(solar_alt_deg: float) -> float:
     """
     Fattore scala adattivo per sky_bg_* in base all'altitudine solare.
-    Calibrato perché bg_B_post-scale sia:
-      notte (<-12°):  ~5 ph/px   (deep dark)
-      civil dusk (0°): ~25 ph/px (glow visibile)
-      mattino (+15°): ~140 ph/px (cielo blu)
-      mezzogiorno:    ~500 ph/px (pieno)
+    Calibrato per il pipeline log10 a 4.8 decadi — servono valori
+    abbastanza alti da sopravvivere al tone mapping e produrre un grigio
+    caldo visibile (Bortle 3-4):
+      notte (<-12°):  ~5-8 ph/px  (warm grey background)
+      civil dusk (0°): ~25 ph/px  (glow visibile)
+      mattino (+15°): ~140 ph/px  (cielo blu)
+      mezzogiorno:    ~500 ph/px  (pieno)
     """
     if solar_alt_deg < -12.0:
-        return 0.055
+        return 0.048
     elif solar_alt_deg < 0.0:
         t = (solar_alt_deg + 12.0) / 12.0
-        return 0.055 * (1 - t) + 0.008 * t
+        return 0.048 * (1 - t) + 0.010 * t
     elif solar_alt_deg < 15.0:
         t = solar_alt_deg / 15.0
-        return 0.008 * (1 - t) + 0.001 * t
+        return 0.010 * (1 - t) + 0.001 * t
     else:
         return max(0.0005, 0.001 * (1.0 - (solar_alt_deg - 15.0) / 75.0))
 
@@ -83,16 +85,22 @@ def build_allsky_background(size: int, atm_state, exposure_s: float = 1.0,
         bg_r = atm_state.sky_bg_r * exposure_s * scale * gm * transparency
         bg_g = atm_state.sky_bg_g * exposure_s * scale * gm * transparency
         bg_b = atm_state.sky_bg_b * exposure_s * scale * gm * transparency
+        # Night blue damping: atmospheric models over-predict blue at deep night.
+        # Real dark-sky photos show warm grey with a subtle cool tint, not bright blue.
+        if solar_alt < -12.0:
+            bg_b *= 0.70   # moderate blue damping (was 0.55 — too aggressive)
+            bg_g *= 0.90   # very slight green reduction
     else:
         solar_alt  = -30.0
         solar_az_r = math.pi
         gm = _gain_mult(gain_sw)
-        bg_r = 0.10 * exposure_s * gm * transparency
-        bg_g = 0.20 * exposure_s * gm * transparency
-        bg_b = 0.60 * exposure_s * gm * transparency
+        bg_r = 0.35 * exposure_s * gm * transparency
+        bg_g = 0.35 * exposure_s * gm * transparency
+        bg_b = 0.30 * exposure_s * gm * transparency
 
-    # Airmass gradient
-    horizon_boost = 1.20 if solar_alt < -12.0 else (1.45 if solar_alt < 0.0 else 1.8)
+    # Airmass gradient — visible atmospheric brightening toward the horizon.
+    # At night this is the main source of visible Bortle glow / light pollution.
+    horizon_boost = 1.50 if solar_alt < -12.0 else (1.65 if solar_alt < 0.0 else 1.8)
     alt_gradient  = 1.0 + r_norm * (horizon_boost - 1.0)
 
     # Spatial noise
@@ -113,9 +121,9 @@ def build_allsky_background(size: int, atm_state, exposure_s: float = 1.0,
     else:
         sun_glow = np.zeros((H, W), np.float32)
 
-    # Airglow band (only at deep night)
+    # Airglow band (only at deep night) — green-ish emission at ~90km altitude
     if solar_alt < -18.0:
-        airglow = np.exp(-((r_norm - 0.89) / 0.06) ** 2) * 0.4
+        airglow = np.exp(-((r_norm - 0.89) / 0.08) ** 2) * 0.80
     else:
         airglow = np.zeros((H, W), np.float32)
 
@@ -124,6 +132,28 @@ def build_allsky_background(size: int, atm_state, exposure_s: float = 1.0,
          + airglow * bg_g * 0.3) * inside
     B = (bg_b * alt_gradient + sun_glow * bg_b * 0.05 + sky_noise
          + airglow * bg_b * 0.15) * inside
+
+    # ── Horizon haze layer (first 13° above horizon) ──────────────────
+    # THE key visual atmospheric cue.  Absolute brightness values ensure
+    # visible warm glow even after log10 tone mapping.
+    haze_start = 0.85    # r_norm where haze begins (≈ alt 13°)
+    haze_strength = 2.0 if solar_alt < -12.0 else (3.5 if solar_alt < 0.0 else 5.0)
+    haze = np.clip((r_norm - haze_start) / (1.0 - haze_start), 0.0, 1.0) ** 1.2
+    haze *= inside * haze_strength
+    # Warm grey-brown haze — absolute values to survive tone mapping
+    R += haze * 0.8
+    G += haze * 0.65
+    B += haze * 0.40
+
+    # ── Photon noise (Poissonian) ─────────────────────────────────────
+    # Use exposure-based seed so noise varies between frames (not static).
+    # Strength scales with sqrt(signal) — true photon shot noise.
+    noise_seed = int(abs(hash((exposure_s, gain_sw, solar_alt)))) % (2**31)
+    _rng = np.random.default_rng(noise_seed)
+    noise_amp = 0.25  # stronger grain for photographic feel
+    R += _rng.standard_normal(R.shape).astype(np.float32) * np.sqrt(np.maximum(R, 0.1)) * noise_amp
+    G += _rng.standard_normal(G.shape).astype(np.float32) * np.sqrt(np.maximum(G, 0.1)) * noise_amp
+    B += _rng.standard_normal(B.shape).astype(np.float32) * np.sqrt(np.maximum(B, 0.1)) * noise_amp
 
     return np.stack([np.clip(R, 0, None), np.clip(G, 0, None), np.clip(B, 0, None)],
                     axis=-1).astype(np.float32)
@@ -275,25 +305,42 @@ class AllSkyRenderer:
                       cx, cy, radius, exposure_s, atm_state, gain_sw=200):
         H = W = self.render_size
         gm = _gain_mult(gain_sw)
-        
+
         # Get transparency from atmospheric state
         transparency = getattr(atm_state, 'transparency', 1.0)
-        
+
         effective_mag_limit = mag_limit - (1.0 - transparency) * 2.5
-        for star in universe.get_stars():
-            if star.mag > effective_mag_limit:
-                continue
-            pos = _radec_to_xy(star.ra_deg, star.dec_deg, jd,
+
+        # === Vectorized magnitude pre-filter (allsky sees full hemisphere) ===
+        stars, ra_arr, dec_arr, mag_arr, bv_arr = universe.get_star_arrays()
+        cutoff = int(np.searchsorted(mag_arr, effective_mag_limit, side='right'))
+
+        for idx in range(cutoff):
+            if idx < len(stars):
+                star = stars[idx]
+                star_ra  = star.ra_deg
+                star_dec = star.dec_deg
+                star_mag = star.mag
+                star_name = star.name
+                star_bv  = getattr(star, 'bv_color', 0.6)
+            else:
+                # Bulk star — use array data
+                star_ra  = ra_arr[idx]
+                star_dec = dec_arr[idx]
+                star_mag = mag_arr[idx]
+                star_name = ""
+                star_bv  = bv_arr[idx]
+
+            pos = _radec_to_xy(star_ra, star_dec, jd,
                                self.lat, self.lon, cx, cy, radius)
             if pos is None:
                 continue
             px, py, alt = pos
             if not (0.5 <= px < W - 0.5 and 0.5 <= py < H - 0.5):
                 continue
-            eff_mag = star.mag
+            eff_mag = star_mag
             if atm_state is not None:
-                ext = atm_state.extinction_at(max(2.0, alt),
-                                               getattr(star, 'bv_color', 0.6))
+                ext = atm_state.extinction_at(max(2.0, alt), star_bv)
                 eff_mag += ext
                 if eff_mag > mag_limit + 0.3:
                     continue
@@ -301,12 +348,12 @@ class AllSkyRenderer:
                        * self._qe * gm)
             photons *= transparency  # Scale by atmospheric transparency
             # Stellar scintillation (twinkling) for bright stars
-            if star.mag < 4.0:
+            if star_mag < 4.0 and star_name:
                 # Airmass calculation for amplitude scaling
                 airmass = 1.0 / max(math.sin(math.radians(alt)), 0.01)
 
                 # Unique frequency per star (0.5-2Hz)
-                star_hash = abs(hash(star.name)) % 1000
+                star_hash = abs(hash(star_name)) % 1000
                 twinkle_freq = 0.5 + star_hash / 500.0
 
                 # Time-dependent phase
@@ -323,7 +370,7 @@ class AllSkyRenderer:
                 photons *= brightness_modulation
             if photons < 0.3:
                 continue
-            bv = getattr(star, 'bv_color', 0.6)
+            bv = star_bv
             rc, gc, bc = bv_to_rgb(bv)
             ix = int(round(px)); iy = int(round(py))
             if eff_mag < 0.0:
@@ -349,10 +396,24 @@ class AllSkyRenderer:
                     field[y0:y1,x0:x1,1]+=patch*gc
                     field[y0:y1,x0:x1,2]+=patch*bc
             else:
-                if 0<=iy<H and 0<=ix<W:
-                    field[iy,ix,0]+=photons*rc
-                    field[iy,ix,1]+=photons*gc
-                    field[iy,ix,2]+=photons*bc
+                # Faint stars: bilinear sub-pixel anti-aliasing.
+                # Distribute photons across 2×2 pixel grid weighted by
+                # the fractional position.  Cost: 4 additions per star
+                # (negligible vs. the per-star computation above).
+                fx = px - math.floor(px)
+                fy = py - math.floor(py)
+                ix0 = int(math.floor(px)); iy0 = int(math.floor(py))
+                ix1 = ix0 + 1;             iy1 = iy0 + 1
+                w00 = (1.0 - fx) * (1.0 - fy)
+                w10 = fx * (1.0 - fy)
+                w01 = (1.0 - fx) * fy
+                w11 = fx * fy
+                for (iy_s, ix_s, w) in ((iy0, ix0, w00), (iy0, ix1, w10),
+                                         (iy1, ix0, w01), (iy1, ix1, w11)):
+                    if 0 <= iy_s < H and 0 <= ix_s < W:
+                        field[iy_s, ix_s, 0] += photons * rc * w
+                        field[iy_s, ix_s, 1] += photons * gc * w
+                        field[iy_s, ix_s, 2] += photons * bc * w
 
     def get_info(self):
         return {"camera": self.spec.name, "fov_deg": (180.0,180.0),

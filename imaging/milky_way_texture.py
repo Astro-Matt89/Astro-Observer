@@ -138,44 +138,48 @@ _DUST_LANES = [
 ]
 
 # Emission nebulae (HII regions): (l, b, sigma, brightness, R_boost, G_boost, B_boost)
-# These add a RED component to the MW band
+# In broadband allsky cameras, emission nebulae are INVISIBLE as individual
+# features.  They contribute only a very subtle warm colour shift within the
+# MW band.  Brightness values here are ~10× lower than a narrowband renderer
+# would use.  Anything off the galactic plane (like Barnard's Loop at b=-19°)
+# is completely undetectable.
 _EMISSION_NEBULAE = [
-    # Carina Nebula complex (NGC 3372)
-    (287.5,  -0.7,  3.0, 0.45,  1.0, 0.15, 0.20),
+    # Carina Nebula complex (NGC 3372) — subtle warm tint only
+    (287.5,  -0.7,  3.0, 0.035,  1.0, 0.15, 0.20),
     # Eta Carinae extended
-    (287.0,  -1.5,  5.0, 0.20,  0.8, 0.10, 0.15),
-    # Gum Nebula (huge, faint)
-    (264.0,  -4.0, 12.0, 0.08,  0.6, 0.10, 0.15),
-    # Lagoon Nebula (M8)
-    (  6.0,  -1.3,  1.5, 0.30,  1.0, 0.15, 0.10),
+    (287.0,  -1.5,  5.0, 0.015,  0.8, 0.10, 0.15),
+    # Gum Nebula (huge, extremely faint — below detection)
+    (264.0,  -4.0, 12.0, 0.005,  0.6, 0.10, 0.15),
+    # Lagoon Nebula (M8) — within band, subtle
+    (  6.0,  -1.3,  1.5, 0.025,  1.0, 0.15, 0.10),
     # Trifid (M20) + Omega (M17)
-    ( 15.0,  -0.7,  2.0, 0.25,  0.9, 0.15, 0.10),
+    ( 15.0,  -0.7,  2.0, 0.020,  0.9, 0.15, 0.10),
     # Eagle Nebula (M16)
-    ( 17.0,   0.8,  1.5, 0.20,  0.8, 0.12, 0.10),
-    # North America Nebula (NGC 7000)
-    ( 85.0,  -0.5,  2.5, 0.25,  0.9, 0.15, 0.15),
-    # Cygnus Loop / Veil (SNR)
-    ( 74.0,  -8.5,  3.0, 0.10,  0.5, 0.20, 0.30),
+    ( 17.0,   0.8,  1.5, 0.015,  0.8, 0.12, 0.10),
+    # North America Nebula (NGC 7000) — faint in broadband
+    ( 85.0,  -0.5,  2.5, 0.018,  0.9, 0.15, 0.15),
+    # Cygnus Loop / Veil (SNR) — way off-plane, invisible
+    ( 74.0,  -8.5,  3.0, 0.003,  0.5, 0.20, 0.30),
     # Rosette Nebula
-    (206.0,  -2.0,  2.0, 0.15,  0.7, 0.10, 0.10),
+    (206.0,  -2.0,  2.0, 0.008,  0.7, 0.10, 0.10),
     # IC 1396 (Elephant's Trunk region)
-    ( 99.0,   3.7,  2.5, 0.15,  0.7, 0.10, 0.10),
-    # Orion Nebula complex (below plane)
-    (209.0, -19.0,  4.0, 0.15,  0.8, 0.15, 0.20),
+    ( 99.0,   3.7,  2.5, 0.008,  0.7, 0.10, 0.10),
+    # Orion Nebula complex — far off-plane (b=-19°), completely invisible allsky
+    (209.0, -19.0,  4.0, 0.002,  0.8, 0.15, 0.20),
     # Heart & Soul nebulae
-    (135.0,   1.0,  3.0, 0.12,  0.6, 0.10, 0.10),
+    (135.0,   1.0,  3.0, 0.006,  0.6, 0.10, 0.10),
     # W51 giant HII region
-    ( 49.5,  -0.4,  2.0, 0.18,  0.7, 0.10, 0.08),
+    ( 49.5,  -0.4,  2.0, 0.012,  0.7, 0.10, 0.08),
     # RCW 49 (Westerlund 2)
-    (284.0,  -0.3,  1.5, 0.20,  0.8, 0.10, 0.10),
+    (284.0,  -0.3,  1.5, 0.015,  0.8, 0.10, 0.10),
     # NGC 3603
-    (291.6,  -0.5,  1.0, 0.18,  0.9, 0.12, 0.10),
+    (291.6,  -0.5,  1.0, 0.012,  0.9, 0.12, 0.10),
     # Sagittarius B2 (near GC, warm)
-    (  0.7,  -0.1,  1.0, 0.15,  0.6, 0.20, 0.05),
+    (  0.7,  -0.1,  1.0, 0.010,  0.6, 0.20, 0.05),
     # Lambda Centauri (IC 2944)
-    (294.0,  -1.5,  1.5, 0.12,  0.6, 0.10, 0.10),
+    (294.0,  -1.5,  1.5, 0.008,  0.6, 0.10, 0.10),
     # Flaming Star / IC 405 region
-    (173.0,  -2.0,  2.0, 0.08,  0.5, 0.10, 0.12),
+    (173.0,  -2.0,  2.0, 0.004,  0.5, 0.10, 0.12),
 ]
 
 
@@ -183,7 +187,7 @@ _EMISSION_NEBULAE = [
 # Texture builder
 # ═══════════════════════════════════════════════════════════════════════════
 
-def build_milky_way_texture(res_l: int = 720, res_b: int = 360,
+def build_milky_way_texture(res_l: int = 1440, res_b: int = 720,
                              seed: int = 42) -> np.ndarray:
     """
     Build a (res_b, res_l, 3) float32 texture in galactic coordinates.
@@ -202,11 +206,15 @@ def build_milky_way_texture(res_l: int = 720, res_b: int = 360,
     l_c = ((l_grid + 180.0) % 360.0) - 180.0   # centred on GC
 
     # ── 1. Band profile ───────────────────────────────────────────────────
-    # Two-component Gaussian: sharp core + extended halo
-    sigma_core = 4.0    # narrow bright core
-    sigma_halo = 14.0   # wide faint halo (zodiacal/stellar halo)
+    # Two-component Gaussian matching real allsky photos:
+    #   - Narrow core (σ=5°): the bright band where dust lanes are visible
+    #   - Moderate halo (σ=18°): gradual falloff into dark sky
+    # NO wide background component — away from the plane, the sky is BLACK.
+    # Real allsky photos show ~10-15° visible band width with ~20° soft fade.
+    sigma_core = 5.0    # narrow bright core — dust lanes live here
+    sigma_halo = 18.0   # soft transition to dark sky
     band_core = np.exp(-0.5 * (b_grid / sigma_core) ** 2)
-    band_halo = np.exp(-0.5 * (b_grid / sigma_halo) ** 2) * 0.15
+    band_halo = np.exp(-0.5 * (b_grid / sigma_halo) ** 2) * 0.20
     band = (band_core + band_halo).astype(np.float32)
 
     # ── 2. Longitude brightness ───────────────────────────────────────────
@@ -250,10 +258,10 @@ def build_milky_way_texture(res_l: int = 720, res_b: int = 360,
     # Add fractal noise to dust for organic edges
     rng_seed = seed + 100
     dust_noise = _fbm(l_grid * 0.08 + rng_seed, b_grid * 0.15 + rng_seed * 0.3,
-                       octaves=4, lacunarity=2.1, gain=0.48)
-    # Modulate absorption edges: noise makes dust clumpier
-    absorption_noisy = absorption + 0.12 * dust_noise * (1.0 - absorption)
-    absorption = np.clip(absorption_noisy, 0.05, 1.0).astype(np.float32)
+                       octaves=5, lacunarity=2.1, gain=0.48)
+    # Modulate absorption edges: noise makes dust clumpier and more visible
+    absorption_noisy = absorption + 0.22 * dust_noise * (1.0 - absorption)
+    absorption = np.clip(absorption_noisy, 0.03, 1.0).astype(np.float32)
 
     # ── 6. Fractal noise for star field texture ───────────────────────────
     # Large-scale arm structure
@@ -265,15 +273,23 @@ def build_milky_way_texture(res_l: int = 720, res_b: int = 360,
     # Fine-scale granularity (individual star clusters, dark globules)
     noise_fine = _fbm(l_grid * 0.35 + seed * 2.1, b_grid * 0.60 + seed * 2.1,
                        octaves=3, lacunarity=2.2, gain=0.45)
+    # Very fine noise — unresolved star cluster granularity
+    noise_vfine = _fbm(l_grid * 0.95 + seed * 3.3, b_grid * 1.60 + seed * 3.3,
+                        octaves=3, lacunarity=2.2, gain=0.42)
     texture = (1.0
-               + 0.30 * noise_large
-               + 0.22 * noise_med
-               + 0.14 * noise_fine)
-    texture = np.clip(texture, 0.3, 1.7).astype(np.float32)
+               + 0.25 * noise_large
+               + 0.18 * noise_med
+               + 0.15 * noise_fine
+               + 0.08 * noise_vfine)
+    texture = np.clip(texture, 0.45, 1.55).astype(np.float32)
 
     # ── 7. Combine into luminance ─────────────────────────────────────────
     luminance = (band * lon_mod + star_cloud_layer + bulge) * absorption * texture
     luminance = np.clip(luminance, 0.0, None).astype(np.float32)
+    # Minimum floor: essentially zero — the MW band naturally fades to nothing
+    # at high galactic latitudes.  The halo component (σ=18°) provides the
+    # gradual transition.  No artificial floor needed.
+    luminance = np.maximum(luminance, 0.001)
 
     # ── 8. Colour mapping ─────────────────────────────────────────────────
     # Base colour depends on longitude (warm core → cool disc)
@@ -313,11 +329,60 @@ def build_milky_way_texture(res_l: int = 720, res_b: int = 360,
         out_g += mask * bright * eg
         out_b += mask * bright * eb
 
-    # ── 10. Finalise ──────────────────────────────────────────────────────
+    # ── 10. Zodiacal light + gegenschein ─────────────────────────────────
+    # Ecliptic north pole in galactic coordinates: (l≈96.4°, b≈29.8°)
+    _enp_l_r = math.radians(96.4)
+    _enp_b_r = math.radians(29.8)
+    enp_x = math.cos(_enp_b_r) * math.cos(_enp_l_r)
+    enp_y = math.cos(_enp_b_r) * math.sin(_enp_l_r)
+    enp_z = math.sin(_enp_b_r)
+
+    # Galactic unit vectors for the texture grid
+    b_r = np.radians(b_grid)
+    l_r_zod = np.radians(l_grid)
+    vx_g = np.cos(b_r) * np.cos(l_r_zod)
+    vy_g = np.cos(b_r) * np.sin(l_r_zod)
+    vz_g = np.sin(b_r)
+
+    # Ecliptic latitude (sine = dot product with ecliptic pole)
+    sin_elat = np.clip(vx_g * enp_x + vy_g * enp_y + vz_g * enp_z, -1.0, 1.0)
+    elat_deg = np.degrees(np.arcsin(sin_elat))
+
+    # Zodiacal band: sigma ~15° in ecliptic latitude, warm yellow-white colour
+    sigma_zod = 15.0
+    zod_band = np.exp(-0.5 * (elat_deg / sigma_zod) ** 2).astype(np.float32)
+    # Brightness modulation: brighter near l=0 (galactic centre direction)
+    zod_lon_mod = (0.55 + 0.45 * np.cos(np.radians(l_grid))).astype(np.float32)
+    # Zodiacal light is barely perceptible in broadband allsky photos.
+    # Only visible as a very subtle warm tint near the ecliptic plane.
+    zod_brightness = 0.015
+    out_r += zod_band * zod_lon_mod * zod_brightness * 1.10   # warm yellow-white
+    out_g += zod_band * zod_lon_mod * zod_brightness * 1.05
+    out_b += zod_band * zod_lon_mod * zod_brightness * 0.85
+
+    # Gegenschein: broad faint spot at anti-solar proxy (l=180° ecliptic plane crossing)
+    # Use a fixed representative position near ecliptic at l≈180°, b≈0°
+    gsch_dl = (l_grid % 360.0) - 180.0
+    gsch_db = b_grid
+    gegenschein = np.exp(-0.5 * ((gsch_dl / 12.0) ** 2 + (gsch_db / 10.0) ** 2))
+    gegenschein *= zod_band * 0.008   # essentially invisible in allsky
+    out_r += gegenschein.astype(np.float32) * 1.10
+    out_g += gegenschein.astype(np.float32) * 1.05
+    out_b += gegenschein.astype(np.float32) * 0.85
+
+    # ── 11. Finalise ──────────────────────────────────────────────────────
     tex = np.stack([out_r, out_g, out_b], axis=-1).astype(np.float32)
-    # Light Gaussian blur to smooth noise edges (0.5 px at texture scale)
-    for c in range(3):
-        tex[:, :, c] = gaussian_filter(tex[:, :, c], sigma=0.7)
+
+    # Poissonian micro-variation: faint per-pixel noise to prevent smooth look
+    rng = np.random.default_rng(seed + 7)
+    lum_mean = np.mean(tex, axis=-1, keepdims=True)
+    poisson_noise = rng.uniform(-1.0, 1.0, tex.shape).astype(np.float32)
+    tex += poisson_noise * np.clip(lum_mean * 0.015, 0.0, None)
+
+    # Gaussian blur to smooth texture edges — larger sigma produces the
+    # soft, nebulous look of real MW photographs instead of hard patches
+    for ch in range(3):
+        tex[:, :, ch] = gaussian_filter(tex[:, :, ch], sigma=1.5)
 
     return tex
 
@@ -350,20 +415,19 @@ class MilkyWayLayer:
     _GNP_RA_DEG  = 192.859_508
     _GNP_DEC_DEG =  27.128_336
 
-    def __init__(self, brightness: float = 25.0, seed: int = 42):
+    def __init__(self, brightness: float = 18.0, seed: int = 44):
         """
         Parameters
         ----------
         brightness : float
-            Global brightness multiplier.  Default 25.0 gives a prominent
-            MW band that punches through the game's log tone mapping.
-            The high value is needed because the game uses log10 stretch
-            over 4.8 decades (BLACK=1, WHITE=65535).
+            Global brightness multiplier.  Default 18.0 tuned for the narrow
+            band profile — the MW core is clearly visible with dark lanes
+            while the sky away from the plane stays uniformly dark.
             
-            Guide:  5  = barely visible (ultra-realistic Bortle 3)
-                   15  = subtle glow (realistic wide-field photo)
-                   25  = prominent band with detail (game default)
-                   40+ = dramatic poster look
+            Guide:  8  = barely visible (ultra-realistic Bortle 3)
+                   14  = subtle glow (realistic wide-field photo)
+                   18  = clear band with dust detail (game default)
+                   30+ = dramatic poster look
         seed : int
             Random seed for fractal noise (deterministic).
         """
@@ -387,8 +451,8 @@ class MilkyWayLayer:
         self._gcp_f = gc_plane.astype(np.float32)
 
         # Build the texture map (or load from cache)
-        self._tex_res_l = 720
-        self._tex_res_b = 360
+        self._tex_res_l = 1440
+        self._tex_res_b = 720
         self._texture = self._load_or_build_texture(seed)
         # Pixel scale for coordinate → texture index conversion
         self._l_scale = self._tex_res_l / 360.0   # px per degree
@@ -520,7 +584,20 @@ class MilkyWayLayer:
 
         # Apply brightness, fade, and mask
         scale = self.brightness * fade
-        mask = (inside & (alt_map >= 0.5)).astype(np.float32)
+
+        # Soft horizon mask: smooth fade from 0° to 5° altitude instead of
+        # hard cutoff at 0.5°.  Prevents visible "stamp edge" at horizon.
+        horizon_fade = np.clip(alt_map / 5.0, 0.0, 1.0).astype(np.float32)
+        mask = inside.astype(np.float32) * horizon_fade
+
+        # Galactic latitude opacity: the MW is visible within ~30° of
+        # the galactic plane, with a gentle fade into the sky background.
+        abs_b = np.abs(b_deg)
+        # Full brightness at |b|<10° (core with dust lanes), smooth
+        # fade to zero at |b|=35°.  The warmer sky background (Bortle)
+        # provides continuity so the MW doesn't look "pasted on".
+        lat_opacity = np.clip(1.0 - (abs_b - 10.0) / 25.0, 0.0, 1.0).astype(np.float32)
+        mask *= lat_opacity
 
         field[:, :, 0] += mw_rgb[:, :, 0] * scale * mask
         field[:, :, 1] += mw_rgb[:, :, 1] * scale * mask

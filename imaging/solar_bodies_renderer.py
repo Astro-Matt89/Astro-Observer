@@ -281,7 +281,8 @@ def render_planet(field, body, cx, cy, radius, exposure_s=1.0):
                            ) else getattr(body, 'apparent_diameter_arcsec', 0.0)
     arcsec_per_px = (180.0 * 3600.0) / (2.0 * radius)
     diam_px = diam_arcsec / arcsec_per_px if arcsec_per_px > 0 else 0.0
-    disk_r  = max(diam_px / 2.0, 0.5)
+    # Cap to 2px radius: in 180° allsky FOV even the largest planets are sub-pixel
+    disk_r  = min(max(diam_px / 2.0, 0.5), 2.0)
 
     uid = getattr(body, 'uid', '').upper()
 
@@ -304,14 +305,21 @@ def render_planet(field, body, cx, cy, radius, exposure_s=1.0):
         # Punto stellare (stelle deboli, oggetti minori, pianeti lontani)
         H, W = field.shape[:2]
         ix = int(round(px)); iy = int(round(py))
+
+        # Gas giants (Jupiter, Saturn) should appear cream-white, not yellow.
+        # Their B-V is ~0.8 but visually they look white/cream to the eye.
+        if uid in ("JUPITER", "SATURN"):
+            rc, gc, bc = 1.0, 0.97, 0.88   # cream-white
+
         if 0 <= iy < H and 0 <= ix < W:
             field[iy, ix, 0] += photons * rc
             field[iy, ix, 1] += photons * gc
             field[iy, ix, 2] += photons * bc
         # Alone per pianeti brillanti (mag < 2)
+        # Cap glow sigma to 1.5px max — in allsky FOV even Jupiter is sub-pixel
         if mag < 2.0:
-            glow_s = max(0.8, (2.0 - mag) * 0.6)
-            _paint_glow(field, px, py, glow_s, (rc, gc, bc), photons * 0.15)
+            glow_s = min(1.5, max(0.6, (2.0 - mag) * 0.4))
+            _paint_glow(field, px, py, glow_s, (rc, gc, bc), photons * 0.10)
 
 
 def _paint_saturn_rings(field, px, py, disk_r_px, B_deg,
