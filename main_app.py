@@ -15,6 +15,17 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
+# GPU support (optional — graceful fallback if ModernGL is not installed)
+import gpu
+
+# numpy is used by the GPU bridge (Surface → texture upload); import once here
+# so the per-frame path in _blit_offscreen_to_gpu() pays no import cost.
+try:
+    import numpy as np
+    _NUMPY_AVAILABLE = True
+except ImportError:
+    _NUMPY_AVAILABLE = False
+
 # Import state manager
 from game.state_manager import StateManager
 
@@ -36,6 +47,21 @@ WIDTH, HEIGHT = 1280, 800
 FPS = 60
 TITLE = "Observatory Simulation - Alpha v0.2"
 
+# ---------------------------------------------------------------------------
+# Passthrough fragment shader — uploads offscreen Pygame Surface to the
+# OpenGL window via a fullscreen quad.  Y-axis is flipped because Pygame
+# surfaces have Y=0 at the top while OpenGL has Y=0 at the bottom.
+# ---------------------------------------------------------------------------
+_PASSTHROUGH_FRAGMENT = """
+#version 330
+uniform sampler2D u_texture;
+out vec4 fragColor;
+in vec2 uv;
+void main() {
+    fragColor = texture(u_texture, vec2(uv.x, 1.0 - uv.y));
+}
+"""
+
 
 class ObservatoryGame:
     """
@@ -46,33 +72,75 @@ class ObservatoryGame:
     
     def __init__(self):
         """Initialize game"""
+        # Parse command line flags
+        no_gpu = '--no-gpu' in sys.argv
+
         # Initialize Pygame
         pygame.init()
-        
+
         # Window settings (can be changed with F11 or resized)
         self.fullscreen = False
-        self.screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
-        pygame.display.set_caption(TITLE)
-        self.clock = pygame.time.Clock()
-        
-        # Initialize theme
-        self.theme = get_theme()
-        
-        # Create state manager
-        self.state_manager = StateManager()
-        
-        # Navigation manager
-        self.nav_manager = NavigationManager(initial_screen='MAIN_MENU')
-        
-        # Register screens
-        self._register_screens()
-        
-        # Start at Main Menu
-        self.state_manager.switch_to('MAIN_MENU', push_stack=False)
-        
-        self.running = True
+
+        # GPU state
+        self.gpu_enabled = False
+        self.gpu_ctx = None
+        self._offscreen_surface = None
+        self._rgba_buf = None
+        self._screen_tex = None
+        self._passthrough_prog = None
+        self._passthrough_vao = None
+
         print(f"\n{TITLE}")
         print("=" * 60)
+
+        if gpu.GPU_AVAILABLE and not no_gpu:
+            try:
+                pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MAJOR_VERSION, 3)
+                pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MINOR_VERSION, 3)
+                pygame.display.gl_set_attribute(
+                    pygame.GL_CONTEXT_PROFILE_MASK,
+                    pygame.GL_CONTEXT_PROFILE_CORE,
+                )
+                self.screen = pygame.display.set_mode(
+                    (WIDTH, HEIGHT),
+                    pygame.OPENGL | pygame.DOUBLEBUF | pygame.RESIZABLE,
+                )
+                import moderngl
+                self.gpu_ctx = moderngl.create_context()
+                self._init_gpu_bridge(WIDTH, HEIGHT)
+                self.gpu_enabled = True
+                print(f"GPU: enabled — {self.gpu_ctx.info['GL_RENDERER']}")
+                print(f"     OpenGL {self.gpu_ctx.info['GL_VERSION']}")
+            except Exception as exc:
+                print(f"GPU: disabled (OpenGL init failed: {exc})")
+                self.gpu_ctx = None
+                self.screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
+        elif not gpu.GPU_AVAILABLE and not no_gpu:
+            print("GPU: disabled (ModernGL not installed)")
+            self.screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
+        else:
+            print("GPU: disabled (--no-gpu flag)")
+            self.screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
+
+        pygame.display.set_caption(TITLE)
+        self.clock = pygame.time.Clock()
+
+        # Initialize theme
+        self.theme = get_theme()
+
+        # Create state manager
+        self.state_manager = StateManager()
+
+        # Navigation manager
+        self.nav_manager = NavigationManager(initial_screen='MAIN_MENU')
+
+        # Register screens
+        self._register_screens()
+
+        # Start at Main Menu
+        self.state_manager.switch_to('MAIN_MENU', push_stack=False)
+
+        self.running = True
         print("Initialized successfully!")
         print("=" * 60)
     
@@ -101,6 +169,81 @@ class ObservatoryGame:
         
         # Sky Chart (COMPLETE!)
         self.state_manager.register_screen('SKYCHART', SkychartScreen(self.state_manager))
+
+    # -----------------------------------------------------------------------
+    # GPU bridge helpers
+    # -----------------------------------------------------------------------
+
+    def _init_gpu_bridge(self, width: int, height: int) -> None:
+        """Set up the offscreen Surface → GPU texture passthrough bridge.
+
+        Must be called after moderngl.create_context() so that self.gpu_ctx
+        is valid.  Safe to call again after a context re-creation (fullscreen
+        toggle) — old GL objects are already freed by the driver.
+        """
+        import moderngl
+        from gpu.shaders import VERTEX_SHADER
+
+        self._offscreen_surface = pygame.Surface((width, height))
+        # Pre-allocated RGBA buffer reused every frame to avoid per-frame alloc
+        self._rgba_buf = np.empty((height, width, 4), dtype=np.uint8)
+        self._rgba_buf[:, :, 3] = 255  # alpha always opaque
+
+        # Compile passthrough shader program
+        self._passthrough_prog = self.gpu_ctx.program(
+            vertex_shader=VERTEX_SHADER,
+            fragment_shader=_PASSTHROUGH_FRAGMENT,
+        )
+
+        # Fullscreen quad: position (x, y) + texcoord (u, v)
+        _verts = np.array([
+            -1, -1,  0, 0,
+             1, -1,  1, 0,
+            -1,  1,  0, 1,
+             1,  1,  1, 1,
+        ], dtype='f4')
+        _vbo = self.gpu_ctx.buffer(_verts.tobytes())
+        self._passthrough_vao = self.gpu_ctx.vertex_array(
+            self._passthrough_prog,
+            [(_vbo, '2f 2f', 'in_position', 'in_texcoord')],
+        )
+
+        # RGBA uint8 GPU texture (matches window size; recreated on resize)
+        self._screen_tex = self.gpu_ctx.texture((width, height), 4, dtype='u1')
+        self._screen_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+
+    def _resize_gpu_bridge(self, width: int, height: int) -> None:
+        """Resize the offscreen surface and GPU texture after a window resize."""
+        import moderngl
+
+        self._offscreen_surface = pygame.Surface((width, height))
+        self._rgba_buf = np.empty((height, width, 4), dtype=np.uint8)
+        self._rgba_buf[:, :, 3] = 255
+        if self._screen_tex is not None:
+            self._screen_tex.release()
+        self._screen_tex = self.gpu_ctx.texture((width, height), 4, dtype='u1')
+        self._screen_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+
+    def _blit_offscreen_to_gpu(self) -> None:
+        """Upload the offscreen surface to a GPU texture and render it to screen.
+
+        Pipeline: pygame.Surface → numpy RGBA → GPU texture → fullscreen quad.
+        The RGBA buffer is pre-allocated in _init_gpu_bridge / _resize_gpu_bridge
+        so this path makes no heap allocations beyond the surfarray view.
+        """
+        import moderngl
+
+        arr = pygame.surfarray.array3d(self._offscreen_surface)  # (W, H, 3) uint8
+        self._rgba_buf[:, :, :3] = arr.transpose(1, 0, 2)        # (H, W, 3) → in-place
+        self._screen_tex.write(self._rgba_buf.tobytes())
+
+        sw, sh = pygame.display.get_surface().get_size()
+        self.gpu_ctx.screen.use()
+        self.gpu_ctx.viewport = (0, 0, sw, sh)
+        self.gpu_ctx.clear(0.0, 0.0, 0.0)
+        self._screen_tex.use(location=0)
+        self._passthrough_prog['u_texture'].value = 0
+        self._passthrough_vao.render(moderngl.TRIANGLE_STRIP)
     
     def run(self):
         """Main game loop"""
@@ -138,15 +281,20 @@ class ObservatoryGame:
             self.state_manager.update(dt)
             
             # Render
-            self.screen.fill(self.theme.colors.BG_DARK)
-            self.state_manager.render(self.screen)
+            render_target = self._offscreen_surface if self.gpu_enabled else self.screen
+            render_target.fill(self.theme.colors.BG_DARK)
+            self.state_manager.render(render_target)
             
             # Display FPS (optional, for debugging)
             if False:  # Set to True to show FPS
                 fps_text = f"FPS: {int(self.clock.get_fps())}"
                 font = self.theme.fonts.tiny()
                 rendered = font.render(fps_text, False, self.theme.colors.FG_DARK)
-                self.screen.blit(rendered, (WIDTH - 80, 10))
+                render_target.blit(rendered, (WIDTH - 80, 10))
+
+            # GPU mode: upload offscreen Surface → texture → fullscreen quad
+            if self.gpu_enabled:
+                self._blit_offscreen_to_gpu()
             
             pygame.display.flip()
         
@@ -156,22 +304,43 @@ class ObservatoryGame:
     def toggle_fullscreen(self):
         """Toggle between fullscreen and windowed mode"""
         self.fullscreen = not self.fullscreen
-        
+
         if self.fullscreen:
             # Get desktop size
             display_info = pygame.display.Info()
             width, height = display_info.current_w, display_info.current_h
-            self.screen = pygame.display.set_mode((width, height), pygame.FULLSCREEN)
+            flags = pygame.FULLSCREEN
+            if self.gpu_enabled:
+                flags |= pygame.OPENGL | pygame.DOUBLEBUF
+            self.screen = pygame.display.set_mode((width, height), flags)
             print(f"Switched to fullscreen: {width}x{height}")
         else:
             # Return to windowed mode
-            self.screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
-            print(f"Switched to windowed: {WIDTH}x{HEIGHT}")
+            width, height = WIDTH, HEIGHT
+            flags = pygame.RESIZABLE
+            if self.gpu_enabled:
+                flags |= pygame.OPENGL | pygame.DOUBLEBUF
+            self.screen = pygame.display.set_mode((width, height), flags)
+            print(f"Switched to windowed: {width}x{height}")
+
+        if self.gpu_enabled:
+            try:
+                import moderngl
+                self.gpu_ctx = moderngl.create_context()
+                self._init_gpu_bridge(width, height)
+            except Exception as exc:
+                print(f"GPU: context lost during fullscreen toggle ({exc}), falling back to software")
+                self.gpu_enabled = False
+                self.gpu_ctx = None
     
     def handle_resize(self, width: int, height: int):
         """Handle window resize event"""
         if not self.fullscreen:
-            self.screen = pygame.display.set_mode((width, height), pygame.RESIZABLE)
+            if self.gpu_enabled:
+                # OpenGL viewport updates automatically; just resize the bridge
+                self._resize_gpu_bridge(width, height)
+            else:
+                self.screen = pygame.display.set_mode((width, height), pygame.RESIZABLE)
             print(f"Window resized to: {width}x{height}")
     
     def quit(self):
