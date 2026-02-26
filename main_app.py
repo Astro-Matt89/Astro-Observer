@@ -131,6 +131,10 @@ class ObservatoryGame:
         # Create state manager
         self.state_manager = StateManager()
 
+        # Share the GPU context so screens can reuse it instead of creating
+        # a second ModernGL context (which would cause a black-screen conflict).
+        self.state_manager.gpu_ctx = self.gpu_ctx
+
         # Navigation manager
         self.nav_manager = NavigationManager(initial_screen='MAIN_MENU')
 

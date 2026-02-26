@@ -291,7 +291,8 @@ class SkychartScreen(BaseScreen):
         """Attempt to create GPUSkyEngine; sets _gpu_engine or leaves it None."""
         self._gpu_init_attempted = True
         try:
-            self._gpu_engine = _GPU_ENGINE_CLASS()
+            shared_ctx = getattr(self.state_manager, 'gpu_ctx', None)
+            self._gpu_engine = _GPU_ENGINE_CLASS(ctx=shared_ctx)
             print("[SkyChart] GPUSkyEngine initialised successfully")
         except Exception as exc:
             print(f"[SkyChart] GPUSkyEngine init failed: {exc}")

@@ -83,9 +83,20 @@ class GPUSkyEngine:
     # Construction
     # ------------------------------------------------------------------
 
-    def __init__(self, internal_w: int = _INTERNAL_W, internal_h: int = _INTERNAL_H):
+    def __init__(self, internal_w: int = _INTERNAL_W, internal_h: int = _INTERNAL_H,
+                 ctx=None):
         """
         Create GPU context from the active Pygame OpenGL window.
+
+        Args:
+            internal_w: Internal render width in pixels.
+            internal_h: Internal render height in pixels.
+            ctx: Optional external ModernGL context (``moderngl.Context``) to
+                 reuse.  When provided the engine shares that context instead of
+                 creating a new one, which avoids the conflict that arises when
+                 main_app.py has already called moderngl.create_context().  If
+                 *not* provided (standalone / PoC usage) a new context is created
+                 as before.
 
         Raises RuntimeError if the OpenGL context cannot be created.
         Must be called *after* pygame.display.set_mode(flags=OPENGL|DOUBLEBUF).
@@ -93,15 +104,18 @@ class GPUSkyEngine:
         self.iw = internal_w
         self.ih = internal_h
 
-        # ModernGL context from current Pygame OpenGL window
-        try:
-            self.ctx = moderngl.create_context()
-        except Exception as exc:
-            raise RuntimeError(
-                f"Failed to create ModernGL context: {exc}\n"
-                "Make sure the Pygame window was created with "
-                "pygame.OPENGL | pygame.DOUBLEBUF."
-            ) from exc
+        if ctx is not None:
+            self.ctx = ctx
+        else:
+            # ModernGL context from current Pygame OpenGL window
+            try:
+                self.ctx = moderngl.create_context()
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to create ModernGL context: {exc}\n"
+                    "Make sure the Pygame window was created with "
+                    "pygame.OPENGL | pygame.DOUBLEBUF."
+                ) from exc
 
         self._compile_shaders()
         self._create_buffers()
